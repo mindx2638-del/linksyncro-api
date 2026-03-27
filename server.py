@@ -11,38 +11,34 @@ def get_video():
     if not video_url:
         return jsonify({"status": "error", "message": "No URL provided"}), 400
 
-    # ৪কে ডাউনলোডারের মতো অ্যাডভান্সড অপশনস
+    # ৪কে ডাউনলোডারের মতো 'Anti-Block' অপশনস
     ydl_opts = {
-        'format': 'best', # সরাসরি অডিও-ভিডিও যুক্ত সেরা কোয়ালিটি নিবে
+        'format': 'best',
         'quiet': True,
         'no_warnings': True,
         'noplaylist': True,
+        # এই হেডারগুলো থাকলে ইউটিউব মনে করবে এটি আসল ব্রাউজার
         'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
-        'referer': 'https://www.google.com/', # ইউটিউব মনে করবে গুগল থেকে আসা ট্রাফিক
-        'http_headers': {
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-            'Accept-Language': 'en-us,en;q=0.5',
-        }
+        'referer': 'https://www.google.com/',
     }
 
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            # ভিডিও এক্সট্রাক্ট করা
+            # তথ্য বের করা
             info = ydl.extract_info(video_url, download=False)
             
-            # ডাটা পাঠানো (থাম্বনেইলসহ)
+            # রেজাল্ট পাঠানো
             return jsonify({
                 "status": "success",
                 "title": info.get('title', 'Video'),
-                "url": info.get('url'),
-                "thumbnail": info.get('thumbnail'), # অ্যাপে ছবি দেখানোর জন্য
-                "duration": info.get('duration'),
-                "source": info.get('extractor_key')
+                "url": info.get('url') or (info.get('formats')[0].get('url') if info.get('formats') else None),
+                "thumbnail": info.get('thumbnail'),
+                "duration": info.get('duration')
             })
     except Exception as e:
-        # এরর মেসেজ ক্লিন করে পাঠানো
-        return jsonify({"status": "error", "message": "Link blocked or invalid"}), 400
+        # এরর হলে পরিষ্কার মেসেজ পাঠানো
+        return jsonify({"status": "error", "message": str(e)}), 400
 
-# এখানে স্পেলিং ঠিক করা হয়েছে
+# এখানে স্পেলিং মিস্টেক ( __name__ ) ঠিক করা হয়েছে
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000)
