@@ -1,193 +1,203 @@
-import 'dart:isolate';
-import 'dart:ui';
-import 'dart:io';
 import 'package:flutter/material.dart';
-import 'package:flutter_downloader/flutter_downloader.dart';
-import 'package:path_provider/path_provider.dart';
-import 'package:permission_handler/permission_handler.dart';
-import 'package:dio/dio.dart';
+import 'package:http/http.dart' as http;
+import 'dart:convert';
+import 'package:url_launcher/url_launcher.dart';
 
-void main() async {
-  WidgetsFlutterBinding.ensureInitialized();
-  
-  // ১. ডাউনলোডার ইনিশিয়ালাইজেশন
-  await FlutterDownloader.initialize(
-    debug: true, 
-    ignoreSsl: true
-  );
-
-  runApp(const LinkSyncro());
+void main() {
+  runApp(const LinkSyncroApp());
 }
 
-class LinkSyncro extends StatelessWidget {
-  const LinkSyncro({super.key});
+class LinkSyncroApp extends StatelessWidget {
+  const LinkSyncroApp({super.key});
 
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'LinkSyncro',
       debugShowCheckedModeBanner: false,
+      title: 'LinkSyncro Pro',
       theme: ThemeData(
         useMaterial3: true,
-        brightness: Brightness.dark,
-        colorSchemeSeed: Colors.blueAccent,
+        colorScheme: ColorScheme.fromSeed(
+          seedColor: Colors.indigo,
+          brightness: Brightness.light,
+        ),
       ),
-      home: const DownloadScreen(),
+      home: const HomeScreen(),
     );
   }
 }
 
-class DownloadScreen extends StatefulWidget {
-  const DownloadScreen({super.key});
+class HomeScreen extends StatefulWidget {
+  const HomeScreen({super.key});
 
   @override
-  State<DownloadScreen> createState() => _DownloadScreenState();
+  State<HomeScreen> createState() => _HomeScreenState();
 }
 
-class _DownloadScreenState extends State<DownloadScreen> {
+class _HomeScreenState extends State<HomeScreen> {
   final TextEditingController _urlController = TextEditingController();
   bool _isLoading = false;
-  final ReceivePort _port = ReceivePort(); 
+  String? _downloadUrl;
+  String? _videoTitle;
 
-  @override
-  void initState() {
-    super.initState();
-    // ২. ডাউনলোড প্রগ্রেস ট্র্যাক করার জন্য পোর্ট সেটআপ
-    IsolateNameServer.registerPortWithName(_port.sendPort, 'downloader_send_port');
-    _port.listen((dynamic data) {
-      setState(() {});
-    });
+  // IMPORTANT: Updated with the correct '-1' suffix from your Render dashboard
+  final String _apiUrl = "https://linksyncro-api-1.onrender.com/get_video";
 
-    FlutterDownloader.registerCallback(downloadCallback);
-  }
-
-  @override
-  void dispose() {
-    IsolateNameServer.removePortNameMapping('downloader_send_port');
-    _urlController.dispose();
-    super.dispose();
-  }
-
-  @pragma('vm:entry-point')
-  static void downloadCallback(String id, int status, int progress) {
-    final SendPort? send = IsolateNameServer.lookupPortByName('downloader_send_port');
-    send?.send([id, status, progress]);
-  }
-
-  // ৩. মূল ডাউনলোড ফাংশন
-  Future<void> _handleDownload(String userUrl) async {
-    if (userUrl.isEmpty) return;
-
-    // পারমিশন চেক (অ্যান্ড্রয়েড ১৩+ এর জন্য আপডেট করা)
-    if (Platform.isAndroid) {
-      await [
-        Permission.storage,
-        Permission.videos,
-        Permission.notification,
-      ].request();
+  Future<void> _processLink() async {
+    String input = _urlController.text.trim();
+    if (input.isEmpty) {
+      _showMessage("Please paste a video link", isError: true);
+      return;
     }
 
-    setState(() => _isLoading = true);
+    setState(() {
+      _isLoading = true;
+      _downloadUrl = null;
+      _videoTitle = null;
+    });
 
     try {
-      // আপনার পাইথন সার্ভারের আইপি এখানে বসানো হয়েছে
-      // টার্মিনালে যে আইপি দেখাচ্ছে সেটিই এখানে ব্যবহার করা হয়েছে
-      String myServerUrl = "http://10.47.46.93:5000/get_video?url=$userUrl";
-      
-      var response = await Dio().get(myServerUrl);
-      
-      if (response.data['status'] == 'success') {
-        String directUrl = response.data['url']; // ভিডিওর আসল লিঙ্ক
-        
-        // ডাউনলোড ফোল্ডার পাথ গেট করা
-        Directory? downloadsDirectory = await getExternalStorageDirectory();
-        String savedPath = "/storage/emulated/0/Download"; // সরাসরি ডাউনলোড ফোল্ডার
+      final response = await http.get(Uri.parse("$_apiUrl?url=$input"));
 
-        // ডাউনলোড শুরু
-        await FlutterDownloader.enqueue(
-          url: directUrl,
-          savedDir: savedPath,
-          fileName: "LinkSyncro_${DateTime.now().millisecondsSinceEpoch}.mp4",
-          showNotification: true,
-          openFileFromNotification: true,
-          saveInPublicStorage: true,
-        );
-
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text("Download Started! Check notifications.")),
-        );
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        if (data['status'] == 'success') {
+          setState(() {
+            _videoTitle = data['title'];
+            _downloadUrl = data['url'];
+          });
+          _showMessage("Video details fetched successfully!");
+        } else {
+          _showMessage("Could not find video info", isError: true);
+        }
       } else {
-        throw Exception("Server could not find video link");
+        _showMessage("Server is not responding correctly", isError: true);
       }
     } catch (e) {
-      print("Error details: $e");
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("Error: Server not running or Connection failed")),
-      );
+      _showMessage("Connection error! Server might take 30s to wake up.", isError: true);
     } finally {
       setState(() => _isLoading = false);
-      _urlController.clear();
+    }
+  }
+
+  void _showMessage(String msg, {bool isError = false}) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(msg),
+        backgroundColor: isError ? Colors.redAccent : Colors.green,
+        behavior: SnackBarBehavior.floating,
+      ),
+    );
+  }
+
+  Future<void> _downloadVideo() async {
+    if (_downloadUrl != null) {
+      final Uri uri = Uri.parse(_downloadUrl!);
+      if (!await launchUrl(uri, mode: LaunchMode.externalApplication)) {
+        _showMessage("Could not launch download link", isError: true);
+      }
     }
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      body: Container(
-        width: double.infinity,
-        decoration: const BoxDecoration(
-          gradient: LinearGradient(
-            colors: [Color(0xFF0F2027), Color(0xFF203A43), Color(0xFF2C5364)],
-            begin: Alignment.topCenter,
-            end: Alignment.bottomCenter,
-          ),
-        ),
-        child: SafeArea(
-          child: Padding(
-            padding: const EdgeInsets.all(24.0),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Text("LinkSyncro", 
-                  style: TextStyle(fontSize: 40, fontWeight: FontWeight.bold, color: Colors.blueAccent)),
-                const Text("Pro Social Media Downloader", 
-                  style: TextStyle(color: Colors.white70)),
-                const SizedBox(height: 50),
-                
-                TextField(
-                  controller: _urlController,
-                  style: const TextStyle(color: Colors.white),
-                  decoration: InputDecoration(
-                    hintText: "Paste video link here...",
-                    hintStyle: const TextStyle(color: Colors.white38),
-                    filled: true,
-                    fillColor: Colors.white.withOpacity(0.1),
-                    prefixIcon: const Icon(Icons.link, color: Colors.blueAccent),
-                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(15), borderSide: BorderSide.none),
-                  ),
+      appBar: AppBar(
+        title: const Text("LinkSyncro Pro", style: TextStyle(fontWeight: FontWeight.bold)),
+        centerTitle: true,
+        elevation: 2,
+      ),
+      body: SingleChildScrollView(
+        padding: const EdgeInsets.all(20.0),
+        child: Column(
+          children: [
+            const Icon(Icons.cloud_download_outlined, size: 80, color: Colors.indigo),
+            const SizedBox(height: 10),
+            const Text("Fast & Reliable Video Downloader", 
+              style: TextStyle(color: Colors.grey, fontSize: 14)),
+            const SizedBox(height: 30),
+            
+            // Input Field
+            TextField(
+              controller: _urlController,
+              style: const TextStyle(fontSize: 14),
+              decoration: InputDecoration(
+                hintText: "Paste YouTube Link Here...",
+                prefixIcon: const Icon(Icons.link),
+                suffixIcon: IconButton(
+                  icon: const Icon(Icons.clear),
+                  onPressed: () => _urlController.clear(),
                 ),
-                const SizedBox(height: 25),
-                
-                SizedBox(
-                  width: double.infinity,
-                  height: 60,
-                  child: ElevatedButton(
-                    onPressed: _isLoading ? null : () => _handleDownload(_urlController.text),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: Colors.blueAccent,
-                      foregroundColor: Colors.white,
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
-                    ),
-                    child: _isLoading 
-                      ? const CircularProgressIndicator(color: Colors.white)
-                      : const Text("DOWNLOAD NOW", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-                  ),
-                ),
-                const Spacer(),
-                const Center(child: Text("Version 1.0.0", style: TextStyle(color: Colors.white24))),
-              ],
+                border: OutlineInputBorder(borderRadius: BorderRadius.circular(15)),
+                filled: true,
+                fillColor: Colors.blueGrey.withOpacity(0.05),
+              ),
             ),
-          ),
+            const SizedBox(height: 20),
+
+            // Analyze Button
+            SizedBox(
+              width: double.infinity,
+              height: 55,
+              child: ElevatedButton(
+                onPressed: _isLoading ? null : _processLink,
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.indigo,
+                  foregroundColor: Colors.white,
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
+                ),
+                child: _isLoading 
+                  ? const CircularProgressIndicator(color: Colors.white) 
+                  : const Text("Get Download Info", style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+              ),
+            ),
+
+            const SizedBox(height: 40),
+
+            // Result Card
+            if (_videoTitle != null) 
+              Card(
+                elevation: 8,
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+                child: Container(
+                  padding: const EdgeInsets.all(20),
+                  width: double.infinity,
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(20),
+                    gradient: LinearGradient(
+                      colors: [Colors.white, Colors.blue.withOpacity(0.05)],
+                      begin: Alignment.topLeft,
+                      end: Alignment.bottomRight,
+                    ),
+                  ),
+                  child: Column(
+                    children: [
+                      const Icon(Icons.play_circle_fill, size: 50, color: Colors.redAccent),
+                      const SizedBox(height: 15),
+                      Text(
+                        _videoTitle!,
+                        textAlign: TextAlign.center,
+                        style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      const SizedBox(height: 25),
+                      ElevatedButton.icon(
+                        onPressed: _downloadVideo,
+                        icon: const Icon(Icons.download_for_offline),
+                        label: const Text("Download Now"),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: Colors.green[700],
+                          foregroundColor: Colors.white,
+                          padding: const EdgeInsets.symmetric(horizontal: 40, vertical: 15),
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(30)),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+          ],
         ),
       ),
     );

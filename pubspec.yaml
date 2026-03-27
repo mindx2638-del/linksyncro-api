@@ -1,7 +1,6 @@
 name: linksyncro
 description: "A professional video downloader app."
 publish_to: 'none'
-
 version: 1.0.0+1
 
 environment:
@@ -10,17 +9,16 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
-  # এই ভার্সনগুলো সবচাইতে স্টেবল
-  flutter_downloader: ^1.12.0
-  path_provider: ^2.1.2
-  permission_handler: ^11.3.1
-  dio: ^5.4.0
-  cached_network_image: ^3.3.1
+  
+  # এই দুটি লাইন অবশ্যই যুক্ত করবেন
+  http: ^1.1.0
+  url_launcher: ^6.2.0
+  cupertino_icons: ^1.0.5
 
 dev_dependencies:
   flutter_test:
     sdk: flutter
-  flutter_lints: ^3.0.0
+  flutter_lints: ^2.0.0
 
 flutter:
   uses-material-design: true
