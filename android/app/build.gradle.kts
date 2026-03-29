@@ -8,9 +8,11 @@ plugins {
 android {
     // আপনার অ্যাপের ইউনিক নেমস্পেস
     namespace = "com.shaon.linksyncro" 
-    compileSdk = flutter.compileSdkVersion
     
-    // টার্মিনালের এরর অনুযায়ী লেটেস্ট NDK ভার্সন এখানে দেওয়া হলো
+    // এরর ফিক্স করার জন্য এখানে সরাসরি ৩৬ (36) লিখে দিন
+    compileSdk = 36 
+    
+    // টার্মিনালের এরর অনুযায়ী লেটেস্ট NDK ভার্সন
     ndkVersion = "27.0.12077973"
 
     compileOptions {
@@ -28,7 +30,10 @@ android {
         
         // ভিডিও ডাউনলোডার প্যাকেজের জন্য মিনিমাম ২৪ দেওয়া নিরাপদ
         minSdk = 24 
-        targetSdk = flutter.targetSdkVersion
+        
+        // এখানেও ৩৬ (36) করে দেওয়া হলো যাতে প্লাগইনটি ঠিকঠাক কাজ করে
+        targetSdk = 36
+        
         versionCode = flutter.versionCode
         versionName = flutter.versionName
     }
@@ -38,7 +43,7 @@ android {
             // রিলিজ বিল্ডের জন্য সাইনিং কনফিগ
             signingConfig = signingConfigs.getByName("debug")
             
-            // কোড অপ্টিমাইজেশন (বর্তমানে ফলস রাখা হয়েছে)
+            // কোড অপ্টিমাইজেশন
             isMinifyEnabled = false
             isShrinkResources = false
         }
