@@ -9,34 +9,14 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
-  
-  # ভিডিও প্রসেসিং এবং লিঙ্কের জন্য
   youtube_explode_dart: ^2.5.0
-  
-  # নেটওয়ার্ক এবং এপিআই কল
+  url_launcher: ^6.2.5
+  cached_network_image: ^3.3.1
+  cupertino_icons: ^1.0.6
   dio: ^5.4.0
-  http: ^1.1.0 # আপনার কোডে http ও ব্যবহৃত হয়েছে
-  
-  # ডাউনলোড ম্যানেজমেন্ট (Pause, Resume, Notification এর জন্য সেরা)
-  flutter_downloader: ^1.11.6
-  
-  # স্টোরেজ এবং ফাইল পাথ
   path_provider: ^2.1.2
   permission_handler: ^11.3.0
-  
-  # ইমেজ এবং মিডিয়া হ্যান্ডলিং
-  cached_network_image: ^3.3.1
   media_scanner: ^2.2.0
-  
-  # ইউটিলিটি
-  url_launcher: ^6.2.5
-  cupertino_icons: ^1.0.6
-
-dev_dependencies:
-  flutter_test:
-    sdk: flutter
-  flutter_lints: ^3.0.0
 
 flutter:
   uses-material-design: true
-  

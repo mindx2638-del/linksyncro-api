@@ -1,22 +1,19 @@
-import 'dart:isolate';
-import 'dart:ui';
-import 'dart:async';
 import 'dart:io';
+import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:flutter_downloader/flutter_downloader.dart';
-import 'package:path_provider/path_provider.dart';
+import 'package:http/http.dart' as http;
+import 'package:dio/dio.dart';
 import 'package:permission_handler/permission_handler.dart';
+import 'package:media_scanner/media_scanner.dart';
 
-// আপনার কাস্টম সার্ভিসগুলো ইমপোর্ট করে রাখবেন
-// import 'youtube_service.dart'; ...
+// আপনার কাস্টম সার্ভিসগুলো (নিশ্চিত করুন এগুলোতে thumbnail রিটার্ন করে)
+import 'youtube_service.dart';
+import 'facebook_service.dart';
+import 'instagram_service.dart';
 
-void main() async {
+void main() {
   WidgetsFlutterBinding.ensureInitialized();
-  
-  // Flutter Downloader ইনিশিয়ালাইজেশন
-  await FlutterDownloader.initialize(debug: true, ignoreSsl: true);
-
   SystemChrome.setSystemUIOverlayStyle(
     const SystemUiOverlayStyle(statusBarColor: Colors.transparent),
   );
@@ -30,11 +27,11 @@ class LinkSyncroApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return MaterialApp(
       debugShowCheckedModeBanner: false,
+      title: 'LinkSyncro Pro',
       theme: ThemeData(
         useMaterial3: true,
-        brightness: Brightness.dark,
-        colorSchemeSeed: Colors.blueAccent,
-        fontFamily: 'Roboto',
+        brightness: Brightness.dark, // ছবির মতো লুক পেতে ডার্ক থিম
+        colorSchemeSeed: Colors.indigo,
       ),
       home: const HomeScreen(),
     );
@@ -50,249 +47,259 @@ class HomeScreen extends StatefulWidget {
 
 class _HomeScreenState extends State<HomeScreen> {
   final TextEditingController _urlController = TextEditingController();
-  final ReceivePort _port = ReceivePort();
-  
-  String? _taskId;
-  DownloadTaskStatus _status = DownloadTaskStatus.undefined;
-  int _progress = 0;
-  String _statusMessage = "Ready to download";
-  bool _isAnalyzing = false;
+  final YouTubeService _ytService = YouTubeService();
+  final FacebookService _fbService = FacebookService();
+  final InstagramService _igService = InstagramService();
+  final Dio _dio = Dio();
 
-  @override
-  void initState() {
-    super.initState();
-    _bindBackgroundIsolate();
-    FlutterDownloader.registerCallback(downloadCallback);
+  bool _isProcessing = false;
+  double _downloadProgress = 0;
+  String _statusText = "Ready to download";
+  String? _videoTitle;
+  String? _thumbnailUrl; // থাম্বনেইল স্টোর করার জন্য
+
+  Future<void> _pasteFromClipboard() async {
+    final data = await Clipboard.getData('text/plain');
+    if (data?.text != null) {
+      setState(() => _urlController.text = data!.text!.trim());
+    }
   }
 
-  @override
-  void dispose() {
-    _unbindBackgroundIsolate();
-    super.dispose();
+  Future<bool> _handlePermissions() async {
+    if (!Platform.isAndroid) return true;
+    if (await Permission.manageExternalStorage.isGranted) return true;
+    final status = await Permission.manageExternalStorage.request();
+    return status.isGranted;
   }
 
-  // ব্যাকগ্রাউন্ড ডাউনলোড লিসেনার
-  void _bindBackgroundIsolate() {
-    bool isSuccess = IsolateNameServer.registerPortWithName(
-        _port.sendPort, 'downloader_send_port');
-    if (!isSuccess) {
-      _unbindBackgroundIsolate();
-      _bindBackgroundIsolate();
+  Future<void> _startProcess() async {
+    final input = _urlController.text.trim();
+    if (input.isEmpty) {
+      _showToast("Please paste a link first", isError: true);
       return;
     }
-    _port.listen((dynamic data) {
+    if (!await _handlePermissions()) {
+      _showToast("Storage permission denied!", isError: true);
+      return;
+    }
+
+    _resetState("Analyzing link...");
+
+    try {
+      final result = await _resolveLink(input);
+      
+      // API বা সার্ভিস থেকে ডাটা নেওয়া
+      final url = result['url'];
+      final title = result['title'];
+      final thumb = result['thumbnail']; // থাম্বনেইল কী (Key)
+
+      if (url == null || title == null) throw "Invalid response from server";
+
       setState(() {
-        _status = DownloadTaskStatus.fromInt(data[1]);
-        _progress = data[2];
+        _videoTitle = title.toString();
+        _thumbnailUrl = thumb?.toString(); // থাম্বনেইল সেট করা
       });
+
+      await _downloadFile(url.toString(), "${title.toString()}.mp4");
+    } catch (e) {
+      _handleError(e);
+    }
+  }
+
+  Future<Map<String, dynamic>> _resolveLink(String input) async {
+    // নোট: আপনার সার্ভিসগুলোকেও 'thumbnail' কী রিটার্ন করতে হবে
+    if (_ytService.isYouTubeLink(input)) return await _ytService.getVideoDetails(input);
+    if (_fbService.isFacebookLink(input)) return await _fbService.getVideoDetails(input);
+    if (_igService.isInstagramLink(input)) return await _igService.getVideoDetails(input);
+
+    final uri = Uri.parse("https://linksyncro-api-1.onrender.com/get_video?url=${Uri.encodeComponent(input)}");
+    final response = await http.get(uri).timeout(const Duration(seconds: 20));
+
+    if (response.statusCode == 200) {
+      final data = jsonDecode(response.body);
+      return {
+        'url': data['url'],
+        'title': data['title'] ?? "External Video",
+        'thumbnail': data['thumbnail'], // API থেকে থাম্বনেইল কালেকশন
+      };
+    }
+    throw "Unsupported or invalid link";
+  }
+
+  Future<void> _downloadFile(String url, String fileName) async {
+    try {
+      setState(() => _statusText = "Preparing...");
+      const root = "/storage/emulated/0";
+      final folder = Directory("$root/LinkSyncro");
+      if (!await folder.exists()) await folder.create(recursive: true);
+
+      final safeName = fileName.replaceAll(RegExp(r'[<>:"/\\|?*]'), '_').trim();
+      final savePath = "${folder.path}/$safeName";
+
+      await _dio.download(
+        url, savePath,
+        onReceiveProgress: (received, total) {
+          if (total > 0) {
+            setState(() {
+              _downloadProgress = received / total;
+              _statusText = "Downloading...";
+            });
+          }
+        },
+      );
+
+      await MediaScanner.loadMedia(path: savePath);
+      setState(() {
+        _isProcessing = false;
+        _statusText = "Saved to LinkSyncro";
+      });
+      _showToast("Download Completed!");
+    } catch (e) { _handleError(e); }
+  }
+
+  void _handleError(dynamic e) {
+    setState(() => _isProcessing = false);
+    _showToast("Error: $e", isError: true);
+  }
+
+  void _resetState(String status) {
+    setState(() {
+      _isProcessing = true;
+      _downloadProgress = 0;
+      _statusText = status;
+      _videoTitle = null;
+      _thumbnailUrl = null;
     });
   }
 
-  void _unbindBackgroundIsolate() {
-    IsolateNameServer.removePortNameMapping('downloader_send_port');
-  }
-
-  @pragma('vm:entry-point')
-  static void downloadCallback(String id, int status, int progress) {
-    final SendPort? send = IsolateNameServer.lookupPortByName('downloader_send_port');
-    send?.send([id, status, progress]);
-  }
-
-  Future<void> _startDownload() async {
-    final url = _urlController.text.trim();
-    if (url.isEmpty) return;
-
-    // পারমিশন চেক
-    var status = await Permission.storage.request();
-    if (Platform.isAndroid && await Permission.manageExternalStorage.request().isDenied) {
-      return;
-    }
-
-    setState(() => _isAnalyzing = true);
-
-    // এখানে আপনার _resolveLink ফাংশন কল করবেন যা URL থেকে সরাসরি ভিডিও লিঙ্ক বের করবে
-    // উদাহরণের জন্য আমি সরাসরি URL ব্যবহার করছি
-    try {
-      final baseStorage = await getExternalStorageDirectory();
-      final savedDir = Directory("${baseStorage!.path}/LinkSyncro");
-      if (!await savedDir.exists()) await savedDir.create(recursive: true);
-
-      final taskId = await FlutterDownloader.enqueue(
-        url: url, // এখানে ভিডিওর ডিরেক্ট লিঙ্ক দিতে হবে
-        savedDir: savedDir.path,
-        fileName: "Video_${DateTime.now().millisecondsSinceEpoch}.mp4",
-        showNotification: true, 
-        openFileFromNotification: true,
-        saveInPublicStorage: true,
-      );
-
-      setState(() {
-        _taskId = taskId;
-        _isAnalyzing = false;
-      });
-    } catch (e) {
-      setState(() => _isAnalyzing = false);
-      _showSnackBar("Error: $e");
-    }
-  }
-
-  void _pauseDownload() async => await FlutterDownloader.pause(taskId: _taskId!);
-  void _resumeDownload() async => await FlutterDownloader.resume(taskId: _taskId!);
-  void _cancelDownload() async => await FlutterDownloader.cancel(taskId: _taskId!);
-
-  void _showSnackBar(String msg) {
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
+  void _showToast(String message, {bool isError = false}) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(message), backgroundColor: isError ? Colors.red : Colors.indigo),
+    );
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFF0F172A),
-      body: Container(
-        decoration: BoxDecoration(
-          gradient: LinearGradient(
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-            colors: [const Color(0xFF0F172A), Colors.blueGrey.shade900],
-          ),
-        ),
-        child: SafeArea(
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 24),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const SizedBox(height: 50),
-                const Text("LinkSyncro", style: TextStyle(fontSize: 32, fontWeight: FontWeight.bold, letterSpacing: 1.2)),
-                const Text("Fast & Secure Downloader", style: TextStyle(color: Colors.blueAccent, fontSize: 16)),
-                const SizedBox(height: 40),
-                
-                // Input Section
+      backgroundColor: const Color(0xFF1A1A2E), // ছবির মতো ব্যাকগ্রাউন্ড কালার
+      body: SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.all(20),
+          child: Column(
+            children: [
+              const SizedBox(height: 40),
+              const Text("LINKSYNCRO PRO", style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: Colors.white)),
+              const SizedBox(height: 30),
+              
+              // ইনপুট বক্স
+              Container(
+                decoration: BoxDecoration(
+                  color: Colors.white.withOpacity(0.1),
+                  borderRadius: BorderRadius.circular(15),
+                ),
+                child: TextField(
+                  controller: _urlController,
+                  decoration: InputDecoration(
+                    hintText: "Paste link here...",
+                    prefixIcon: const Icon(Icons.link, color: Colors.indigo),
+                    suffixIcon: IconButton(icon: const Icon(Icons.paste), onPressed: _pasteFromClipboard),
+                    border: InputBorder.none,
+                    contentPadding: const EdgeInsets.all(15),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 20),
+              
+              ElevatedButton(
+                style: ElevatedButton.styleFrom(
+                  minimumSize: const Size(double.infinity, 50),
+                  backgroundColor: Colors.indigo,
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
+                ),
+                onPressed: _isProcessing ? null : _startProcess,
+                child: const Text("DOWNLOAD", style: TextStyle(color: Colors.white)),
+              ),
+
+              const SizedBox(height: 40),
+
+              // আপনার দেওয়া ছবির মতো ডাউনলোড কার্ড
+              if (_isProcessing || _downloadProgress > 0)
                 Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 16),
-                  decoration: BoxDecoration(
-                    color: Colors.white.withOpacity(0.05),
-                    borderRadius: BorderRadius.circular(16),
-                    border: Border.all(color: Colors.white.withOpacity(0.1)),
-                  ),
-                  child: TextField(
-                    controller: _urlController,
-                    decoration: InputDecoration(
-                      hintText: "Paste video link here...",
-                      border: InputBorder.none,
-                      suffixIcon: IconButton(
-                        icon: const Icon(Icons.paste, color: Colors.blueAccent),
-                        onPressed: () async {
-                          final data = await Clipboard.getData('text/plain');
-                          if (data?.text != null) _urlController.text = data!.text!;
-                        },
-                      ),
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 20),
-                
-                SizedBox(
                   width: double.infinity,
-                  height: 55,
-                  child: ElevatedButton(
-                    onPressed: _isAnalyzing ? null : _startDownload,
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: Colors.blueAccent,
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-                    ),
-                    child: _isAnalyzing 
-                      ? const CircularProgressIndicator(color: Colors.white) 
-                      : const Text("DOWNLOAD NOW", style: TextStyle(fontWeight: FontWeight.bold, color: Colors.white)),
-                  ),
-                ),
-
-                const SizedBox(height: 40),
-
-                // Download Card
-                if (_taskId != null) 
-                AnimatedContainer(
-                  duration: const Duration(milliseconds: 500),
-                  padding: const EdgeInsets.all(20),
+                  padding: const EdgeInsets.all(16),
                   decoration: BoxDecoration(
-                    color: const Color(0xFF1E293B),
-                    borderRadius: BorderRadius.circular(24),
-                    boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.3), blurRadius: 20)],
+                    color: const Color(0xFF252545), // কার্ডের ডার্ক কালার
+                    borderRadius: BorderRadius.circular(20),
+                    boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.3), blurRadius: 10)],
                   ),
                   child: Column(
+                    mainAxisSize: MainAxisSize.min,
                     children: [
                       Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
+                          // থাম্বনেইল সেকশন (ছবির মতো বাম দিকে)
                           Container(
-                            width: 50, height: 50,
-                            decoration: BoxDecoration(color: Colors.blueAccent.withOpacity(0.2), borderRadius: BorderRadius.circular(12)),
-                            child: const Icon(Icons.movie_filter, color: Colors.blueAccent),
+                            width: 100,
+                            height: 60,
+                            decoration: BoxDecoration(
+                              color: Colors.grey.withOpacity(0.2),
+                              borderRadius: BorderRadius.circular(10),
+                            ),
+                            child: ClipRRect(
+                              borderRadius: BorderRadius.circular(10),
+                              child: _thumbnailUrl != null 
+                                ? Image.network(_thumbnailUrl!, fit: BoxFit.cover)
+                                : const Center(child: CircularProgressIndicator(strokeWidth: 2)),
+                            ),
                           ),
                           const SizedBox(width: 15),
+                          // টাইটেল এবং ইউআরএল টেক্সট
                           Expanded(
                             child: Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
-                                Text(_status == DownloadTaskStatus.complete ? "Download Finished" : "Downloading...", 
-                                  style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
-                                Text(_urlController.text, maxLines: 1, overflow: TextOverflow.ellipsis, 
-                                  style: TextStyle(color: Colors.white.withOpacity(0.5), fontSize: 12)),
+                                Text(
+                                  _isProcessing ? "Downloading..." : "Completed",
+                                  style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.white),
+                                ),
+                                Text(
+                                  _urlController.text,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(fontSize: 12, color: Colors.white.withOpacity(0.5)),
+                                ),
                               ],
                             ),
                           ),
                         ],
                       ),
                       const SizedBox(height: 20),
-                      LinearProgressIndicator(
-                        value: _progress / 100,
-                        backgroundColor: Colors.white.withOpacity(0.1),
-                        color: Colors.blueAccent,
-                        minHeight: 8,
+                      // প্রগ্রেস বার (ছবির মতো নীল রঙের)
+                      ClipRRect(
                         borderRadius: BorderRadius.circular(10),
+                        child: LinearProgressIndicator(
+                          value: _downloadProgress,
+                          minHeight: 6,
+                          backgroundColor: Colors.white.withOpacity(0.1),
+                          valueColor: const AlwaysStoppedAnimation<Color>(Colors.blueAccent),
+                        ),
                       ),
-                      const SizedBox(height: 15),
+                      const SizedBox(height: 10),
+                      // পার্সেন্টেজ এবং স্ট্যাটাস
                       Row(
                         mainAxisAlignment: MainAxisAlignment.spaceBetween,
                         children: [
-                          Text("$_progress%", style: const TextStyle(fontWeight: FontWeight.bold)),
-                          Row(
-                            children: [
-                              if (_status == DownloadTaskStatus.running)
-                                _ActionButton(icon: Icons.pause, color: Colors.orange, onTap: _pauseDownload),
-                              if (_status == DownloadTaskStatus.paused)
-                                _ActionButton(icon: Icons.play_arrow, color: Colors.green, onTap: _resumeDownload),
-                              const SizedBox(width: 10),
-                              _ActionButton(icon: Icons.close, color: Colors.redAccent, onTap: _cancelDownload),
-                            ],
-                          )
+                          Text("${(_downloadProgress * 100).toStringAsFixed(0)}%", style: const TextStyle(color: Colors.white70)),
+                          Text(_statusText, style: const TextStyle(color: Colors.white70, fontSize: 12)),
                         ],
-                      )
+                      ),
                     ],
                   ),
                 ),
-              ],
-            ),
+            ],
           ),
         ),
-      ),
-    );
-  }
-}
-
-class _ActionButton extends StatelessWidget {
-  final IconData icon;
-  final Color color;
-  final VoidCallback onTap;
-  const _ActionButton({required this.icon, required this.color, required this.onTap});
-
-  @override
-  Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: onTap,
-      child: Container(
-        padding: const EdgeInsets.all(8),
-        decoration: BoxDecoration(color: color.withOpacity(0.2), shape: BoxShape.circle),
-        child: Icon(icon, color: color, size: 20),
       ),
     );
   }
