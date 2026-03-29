@@ -6,92 +6,45 @@ import os
 app = Flask(__name__)
 CORS(app)
 
-# ✅ Security check
-def is_valid_url(url):
-    return "youtube.com" in url or "youtu.be" in url
+@app.route('/get_video', methods=['GET'])
+def get_video():
+    video_url = request.args.get('url')
+    if not video_url:
+        return jsonify({"status": "error", "message": "No URL provided"}), 400
 
-# ✅ Common yt-dlp options
-def get_opts():
-    return {
+    # অডিওসহ ভিডিও নিশ্চিত করার জন্য উন্নত ফরম্যাট লজিক
+    ydl_opts = {
+        # acodec!=none মানে অডিও থাকতে হবে, vcodec!=none মানে ভিডিও থাকতে হবে
+        'format': 'best[vcodec!=none][acodec!=none]/best',
         'quiet': True,
         'no_warnings': True,
         'noplaylist': True,
+        'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
     }
 
-# 🔥 1. Get video info + all qualities
-@app.route('/get_video_info', methods=['GET'])
-def get_video_info():
-    url = request.args.get('url')
-
-    if not url:
-        return jsonify({"status": "error", "message": "No URL provided"}), 400
-
-    if not is_valid_url(url):
-        return jsonify({"status": "error", "message": "Invalid URL"}), 400
-
     try:
-        with yt_dlp.YoutubeDL(get_opts()) as ydl:
-            info = ydl.extract_info(url, download=False)
-
-            formats = []
-
-            for f in info.get('formats', []):
-                # Skip audio-only
-                if f.get('vcodec') == 'none':
-                    continue
-
-                formats.append({
-                    "format_id": f.get("format_id"),
-                    "quality": f.get("format_note") or f.get("height"),
-                    "ext": f.get("ext"),
-                    "filesize": f.get("filesize"),
-                    "has_audio": f.get("acodec") != "none"
-                })
-
-            # Sort highest quality first
-            formats = sorted(formats, key=lambda x: (x['quality'] or 0), reverse=True)
-
-            return jsonify({
-                "status": "success",
-                "title": info.get("title"),
-                "thumbnail": info.get("thumbnail"),
-                "formats": formats
-            })
-
-    except Exception as e:
-        return jsonify({"status": "error", "message": str(e)}), 500
-
-
-# 🔥 2. Get download link by selected quality
-@app.route('/get_download', methods=['GET'])
-def get_download():
-    url = request.args.get('url')
-    format_id = request.args.get('format_id')
-
-    if not url or not format_id:
-        return jsonify({"status": "error", "message": "Missing parameters"}), 400
-
-    try:
-        ydl_opts = {
-            'format': f"{format_id}+bestaudio/best",
-            'quiet': True,
-            'noplaylist': True,
-        }
-
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(url, download=False)
+            info = ydl.extract_info(video_url, download=False)
+            
+            # অডিওসহ ডাউনলোড ইউআরএল ফিল্টার করা
+            download_url = info.get('url')
+            if not download_url and 'formats' in info:
+                # এমন ফরম্যাট খোঁজা যেখানে অডিও এবং ভিডিও দুটোই আছে
+                muxed_formats = [f for f in info['formats'] if f.get('acodec') != 'none' and f.get('vcodec') != 'none']
+                if muxed_formats:
+                    # সবচেয়ে ভালো কোয়ালিটির ফাইলটি নেওয়া
+                    download_url = muxed_formats[-1].get('url')
 
             return jsonify({
                 "status": "success",
-                "download_url": info.get("url"),
-                "title": info.get("title")
+                "url": download_url,
+                "title": info.get('title', 'Facebook Video'),
+                "thumbnail": info.get('thumbnail'), # থাম্বনেইল পাঠানো হচ্ছে
+                "source": info.get('extractor')
             })
-
     except Exception as e:
-        return jsonify({"status": "error", "message": str(e)}), 500
+        return jsonify({"status": "error", "message": str(e)}), 400
 
-
-# 🚀 Run server
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
     app.run(host='0.0.0.0', port=port)
