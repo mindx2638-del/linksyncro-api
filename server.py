@@ -12,55 +12,39 @@ def get_video():
     if not video_url:
         return jsonify({"status": "error", "message": "No URL provided"}), 400
 
-    # অডিওসহ ভিডিও নিশ্চিত করার জন্য এবং ইউটিউব/ফেসবুক ব্লক এড়ানোর জন্য কনফিগারেশন
+    # অডিওসহ ভিডিও নিশ্চিত করার জন্য উন্নত ফরম্যাট লজিক
     ydl_opts = {
-        # 'best' এর সাথে acodec এবং vcodec চেক করা হয়েছে যাতে সাউন্ড মিস না হয়
+        # acodec!=none মানে অডিও থাকতে হবে, vcodec!=none মানে ভিডিও থাকতে হবে
         'format': 'best[vcodec!=none][acodec!=none]/best',
         'quiet': True,
         'no_warnings': True,
         'noplaylist': True,
-        # ব্রাউজার হেডার যাতে সাইটগুলো বট হিসেবে ডিটেক্ট না করে
         'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
     }
 
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            # ভিডিওর তথ্য বের করা
             info = ydl.extract_info(video_url, download=False)
             
-            download_url = None
-
-            # ১. সরাসরি ইউআরএল চেক করা
-            if info.get('url'):
-                download_url = info.get('url')
-            
-            # ২. যদি সরাসরি না পাওয়া যায়, তবে ফরম্যাট লিস্ট থেকে সেরা Muxed লিঙ্ক খোঁজা
-            elif 'formats' in info:
-                # এমন সব ফরম্যাট ফিল্টার করা যেখানে অডিও এবং ভিডিও দুটোই আছে
-                muxed_formats = [
-                    f for f in info['formats'] 
-                    if f.get('acodec') != 'none' and f.get('vcodec') != 'none' and f.get('url')
-                ]
+            # অডিওসহ ডাউনলোড ইউআরএল ফিল্টার করা
+            download_url = info.get('url')
+            if not download_url and 'formats' in info:
+                # এমন ফরম্যাট খোঁজা যেখানে অডিও এবং ভিডিও দুটোই আছে
+                muxed_formats = [f for f in info['formats'] if f.get('acodec') != 'none' and f.get('vcodec') != 'none']
                 if muxed_formats:
-                    # সবচেয়ে হাই-কোয়ালিটির (লিস্টের শেষের দিকে থাকে) লিঙ্কটি নেওয়া
+                    # সবচেয়ে ভালো কোয়ালিটির ফাইলটি নেওয়া
                     download_url = muxed_formats[-1].get('url')
-
-            if not download_url:
-                return jsonify({"status": "error", "message": "Could not find a valid video with audio"}), 404
 
             return jsonify({
                 "status": "success",
                 "url": download_url,
-                "title": info.get('title', 'Social Media Video'),
-                "thumbnail": info.get('thumbnail'), # থাম্বনেইল ডাটা
-                "duration": info.get('duration'),
-                "source": info.get('extractor_key')
+                "title": info.get('title', 'Facebook Video'),
+                "thumbnail": info.get('thumbnail'), # থাম্বনেইল পাঠানো হচ্ছে
+                "source": info.get('extractor')
             })
-
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 400
 
 if __name__ == '__main__':
-    # Render বা পোর্টেবল হোস্টিং এর জন্য পোর্ট ম্যানেজমেন্ট
     port = int(os.environ.get('PORT', 5000))
     app.run(host='0.0.0.0', port=port)
