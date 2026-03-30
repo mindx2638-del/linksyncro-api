@@ -6,17 +6,18 @@ import time
 import ipaddress
 import asyncio
 import hashlib
+import os
 from urllib.parse import urlparse
 from concurrent.futures import ThreadPoolExecutor
 
 app = FastAPI()
 
 # -----------------------------
-# CORS (PRODUCTION SAFE)
+# CORS (আপনার ডোমেইন অনুযায়ী আপডেট করুন)
 # -----------------------------
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["https://yourdomain.com"],  # ❗ change this
+    allow_origins=["*"],  # প্রোডাকশনে আপনার নির্দিষ্ট ডোমেইন দিবেন
     allow_credentials=True,
     allow_methods=["GET"],
     allow_headers=["*"],
@@ -36,45 +37,31 @@ logging.basicConfig(
 executor = ThreadPoolExecutor(max_workers=10)
 
 # -----------------------------
-# SIMPLE CACHE (Redis use in production)
+# CACHE & RATE LIMIT
 # -----------------------------
 cache = {}
 CACHE_TTL = 300
-
-# -----------------------------
-# API KEY SYSTEM
-# -----------------------------
-VALID_API_KEYS = {
-    "demo_key_123",
-    "premium_key_456"
-}
-
-# -----------------------------
-# RATE LIMIT
-# -----------------------------
 rate_store = {}
 RATE_LIMIT = 20
 RATE_WINDOW = 60
 
 # -----------------------------
-# ALLOWED DOMAINS (MULTI PLATFORM)
+# API KEYS
+# -----------------------------
+VALID_API_KEYS = {"demo_key_123", "premium_key_456"}
+
+# -----------------------------
+# ALLOWED DOMAINS
 # -----------------------------
 ALLOWED_DOMAINS = {
-    # YouTube
     "youtube.com", "www.youtube.com", "youtu.be", "m.youtube.com",
-
-    # Facebook
-    "facebook.com", "www.facebook.com", "m.facebook.com",
-
-    # Instagram
+    "facebook.com", "www.facebook.com", "m.facebook.com", "fb.watch", "fb.com",
     "instagram.com", "www.instagram.com",
-
-    # TikTok
     "tiktok.com", "www.tiktok.com", "vm.tiktok.com"
 }
 
 # -----------------------------
-# SSRF SAFE CHECK
+# HELPERS
 # -----------------------------
 def is_private_ip(host):
     try:
@@ -82,151 +69,114 @@ def is_private_ip(host):
     except:
         return False
 
-
 def is_valid_url(url: str):
     try:
         parsed = urlparse(url)
-
-        if parsed.scheme not in ["http", "https"]:
+        if parsed.scheme not in ["http", "https"] or not parsed.hostname:
             return False
-
-        if not parsed.hostname:
+        if parsed.hostname in ["localhost", "127.0.0.1"] or is_private_ip(parsed.hostname):
             return False
-
-        if parsed.hostname in ["localhost", "127.0.0.1"]:
-            return False
-
-        if is_private_ip(parsed.hostname):
-            return False
-
-        if parsed.hostname not in ALLOWED_DOMAINS:
-            return False
-
-        return True
-
+        # ডোমেইন চেক (সাবডোমেইন সাপোর্ট সহ)
+        domain_parts = parsed.hostname.split('.')
+        base_domain = ".".join(domain_parts[-2:]) if len(domain_parts) > 1 else parsed.hostname
+        return base_domain in ["youtube.com", "youtu.be", "facebook.com", "fb.com", "fb.watch", "instagram.com", "tiktok.com"]
     except:
         return False
 
-
 # -----------------------------
-# API KEY VALIDATION
-# -----------------------------
-def verify_api_key(request: Request):
-    key = request.headers.get("x-api-key")
-
-    if not key or key not in VALID_API_KEYS:
-        raise HTTPException(status_code=401, detail="Invalid API Key")
-
-    return key
-
-
-# -----------------------------
-# RATE LIMIT CHECK
-# -----------------------------
-def check_rate_limit(api_key: str):
-    now = time.time()
-
-    if api_key not in rate_store:
-        rate_store[api_key] = []
-
-    rate_store[api_key] = [
-        t for t in rate_store[api_key]
-        if now - t < RATE_WINDOW
-    ]
-
-    if len(rate_store[api_key]) >= RATE_LIMIT:
-        return False
-
-    rate_store[api_key].append(now)
-    return True
-
-
-# -----------------------------
-# CORE ENGINE (MULTI PLATFORM)
+# CORE ENGINE (Facebook Fixed)
 # -----------------------------
 def extract_media(url: str):
-
     cache_key = hashlib.md5(url.encode()).hexdigest()
-
-    # Cache check
     if cache_key in cache:
         data, ts = cache[cache_key]
         if time.time() - ts < CACHE_TTL:
             return data
 
+    # কুকি ফাইল চেক (আপনার ফোল্ডারে এই ফাইলটি রাখতে হবে)
+    cookie_path = "facebook_cookies.txt"
+    
     ydl_opts = {
-        "format": "best",  # universal format
+        "format": "best",
         "quiet": True,
         "no_warnings": True,
         "noplaylist": True,
-        "socket_timeout": 15,
-        "retries": 3,
-        "user_agent": "Mozilla/5.0",
+        "socket_timeout": 20,
+        "retries": 5,
+        "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
+        "http_headers": {
+            "Referer": "https://www.facebook.com/",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+        }
     }
 
-    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-        info = ydl.extract_info(url, download=False)
+    # যদি কুকি ফাইল থাকে তবে সেটি ব্যবহার করবে
+    if os.path.exists(cookie_path):
+        ydl_opts["cookiefile"] = cookie_path
+        logging.info("Using cookies for extraction")
 
-        download_url = info.get("url")
+    try:
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(url, download=False)
+            download_url = info.get("url")
 
-        # fallback (best format selection)
-        if not download_url and "formats" in info:
-            formats = [
-                f for f in info["formats"]
-                if f.get("url") and f.get("vcodec") != "none"
-            ]
+            if not download_url and "formats" in info:
+                # ভিডিও কোয়ালিটি ফিল্টার
+                formats = [f for f in info["formats"] if f.get("url") and f.get("vcodec") != "none"]
+                formats.sort(key=lambda x: (x.get("height") or 0), reverse=True)
+                if formats:
+                    download_url = formats[0]["url"]
 
-            formats.sort(
-                key=lambda x: (x.get("height") or 0, x.get("tbr") or 0),
-                reverse=True
-            )
+            if not download_url:
+                return None
 
-            if formats:
-                download_url = formats[0]["url"]
-
-        result = {
-            "status": "success",
-            "url": download_url,
-            "title": info.get("title"),
-            "thumbnail": info.get("thumbnail"),
-            "duration": info.get("duration"),
-            "source": info.get("extractor"),
-            "platform": info.get("extractor_key")  # NEW
-        }
-
-        cache[cache_key] = (result, time.time())
-
-        return result
-
+            result = {
+                "status": "success",
+                "url": download_url,
+                "title": info.get("title", "Video"),
+                "thumbnail": info.get("thumbnail"),
+                "duration": info.get("duration"),
+                "source": info.get("extractor_key")
+            }
+            cache[cache_key] = (result, time.time())
+            return result
+    except Exception as e:
+        logging.error(f"yt-dlp error: {str(e)}")
+        return None
 
 # -----------------------------
-# MAIN API
+# ROUTES
 # -----------------------------
 @app.get("/get_media")
 async def get_media(url: str, request: Request):
+    # API Key Check
+    key = request.headers.get("x-api-key")
+    if not key or key not in VALID_API_KEYS:
+        raise HTTPException(status_code=401, detail="Invalid API Key")
 
-    api_key = verify_api_key(request)
+    # Rate Limit Check
+    now = time.time()
+    user_rates = rate_store.get(key, [])
+    user_rates = [t for t in user_rates if now - t < RATE_WINDOW]
+    rate_store[key] = user_rates
+    if len(user_rates) >= RATE_LIMIT:
+        raise HTTPException(status_code=429, detail="Too many requests")
+    rate_store[key].append(now)
 
-    if not check_rate_limit(api_key):
-        raise HTTPException(status_code=429, detail="Rate limit exceeded")
-
-    if not url:
-        raise HTTPException(status_code=400, detail="URL required")
-
-    if not is_valid_url(url):
-        raise HTTPException(status_code=400, detail="Unsafe URL detected")
+    if not url or not is_valid_url(url):
+        raise HTTPException(status_code=400, detail="Invalid or Unsupported URL")
 
     try:
         loop = asyncio.get_event_loop()
         result = await loop.run_in_executor(executor, extract_media, url)
 
         if not result:
-            raise HTTPException(status_code=404, detail="Media not found")
-
-        logging.info(f"API Success: {result.get('title')} | Key: {api_key}")
+            # যদি প্রথমবার ব্যর্থ হয়, কুকি ছাড়াও একবার ট্রাই করতে পারে
+            raise HTTPException(status_code=404, detail="Could not extract video. It might be private or region-locked.")
 
         return result
-
+    except HTTPException as he:
+        raise he
     except Exception as e:
-        logging.error(str(e))
+        logging.error(f"Server Error: {str(e)}")
         raise HTTPException(status_code=500, detail="Internal server error")
