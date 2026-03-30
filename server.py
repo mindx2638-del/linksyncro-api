@@ -168,6 +168,6 @@ async def get_media(url: str, request: Request):
         logging.error(f"Server Error: {str(e)}")
         raise HTTPException(status_code=500, detail="Internal server error")
 
-if _name_ == "_main_":
+if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=int(os.environ.get("PORT", 8000)))

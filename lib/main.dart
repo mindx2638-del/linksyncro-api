@@ -20,7 +20,6 @@ void main() {
   runApp(const LinkSyncroApp());
 }
 
-// প্রতিটি ডাউনলোডের জন্য আলাদা মডেল
 class DownloadTask {
   String id;
   String inputUrl;
@@ -75,7 +74,7 @@ class HomeScreen extends StatefulWidget {
 
 class _HomeScreenState extends State<HomeScreen> {
   final TextEditingController _urlController = TextEditingController();
-  final List<DownloadTask> _downloadTasks = []; // একাধিক ডাউনলোডের তালিকা
+  final List<DownloadTask> _downloadTasks = []; 
   
   final YouTubeService _ytService = YouTubeService();
   final FacebookService _fbService = FacebookService();
@@ -84,7 +83,6 @@ class _HomeScreenState extends State<HomeScreen> {
   final Dio _dio = Dio(BaseOptions(
     connectTimeout: const Duration(seconds: 30),
     receiveTimeout: const Duration(minutes: 20),
-    validateStatus: (status) => status! < 500,
   ));
 
   Future<void> _pasteFromClipboard() async {
@@ -104,7 +102,6 @@ class _HomeScreenState extends State<HomeScreen> {
     return false;
   }
 
-  // নতুন ডাউনলোড যোগ করার লজিক
   void _addNewDownload() async {
     final input = _urlController.text.trim();
     if (input.isEmpty) {
@@ -122,13 +119,14 @@ class _HomeScreenState extends State<HomeScreen> {
     );
 
     setState(() {
-      _downloadTasks.insert(0, task); // নতুন ডাউনলোড লিস্টের উপরে দেখাবে
+      _downloadTasks.insert(0, task);
       _urlController.clear();
     });
 
     _startDownloadProcess(task);
   }
 
+  // --- ডাউনলোড প্রসেস (Rate Limit এবং Error 36 সমাধানসহ) ---
   Future<void> _startDownloadProcess(DownloadTask task) async {
     try {
       final result = await _resolveLink(task.inputUrl);
@@ -145,8 +143,17 @@ class _HomeScreenState extends State<HomeScreen> {
       final folder = Directory("$root/Download/LinkSyncro");
       if (!await folder.exists()) await folder.create(recursive: true);
 
-      final safeName = task.videoTitle!.replaceAll(RegExp(r'[<>:"/\\|?*]'), '').trim();
-      task.savePath = "${folder.path}/$safeName.mp4";
+      // ১. ফাইলের নাম থেকে অবৈধ ক্যারেক্টার সরানো
+      String cleanName = task.videoTitle!.replaceAll(RegExp(r'[<>:"/\\|?*]'), '').trim();
+      
+      // ২. Error 36 (Name too long) এড়াতে নাম সর্বোচ্চ ৫০ অক্ষরের মধ্যে রাখা (মোবাইল স্ক্রিনশট অনুযায়ী)
+      if (cleanName.length > 50) {
+        cleanName = cleanName.substring(0, 50).trim();
+      }
+      
+      if (cleanName.isEmpty) cleanName = "Video_${task.id}";
+
+      task.savePath = "${folder.path}/$cleanName.mp4";
 
       await _executeDownload(task);
     } catch (e) {
@@ -155,20 +162,25 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<Map<String, dynamic>> _resolveLink(String input) async {
+    // লোকাল সার্ভিস চেক
     if (_ytService.isYouTubeLink(input)) return await _ytService.getVideoDetails(input);
     if (_fbService.isFacebookLink(input)) return await _fbService.getVideoDetails(input);
     if (_igService.isInstagramLink(input)) return await _igService.getVideoDetails(input);
 
-    final uri = Uri.parse("https://linksyncro-api-1.onrender.com/get_video?url=${Uri.encodeComponent(input)}");
-    final response = await http.get(uri).timeout(const Duration(seconds: 25));
+    // --- পরিবর্তন: আপনার সফলভাবে পাবলিশ করা গুগল স্ক্রিপ্ট ব্যবহার ---
+    const String proxyUrl = "https://script.google.com/macros/s/AKfycbzxeJEKINT36IojRp5Z34eiLeQkz6HZlqWj8MKp0zOQC-2mYBBac2fVeNThGCR0QaTIzg/exec";
+
+    final uri = Uri.parse("$proxyUrl?url=${Uri.encodeComponent(input)}");
+    
+    // গুগল সার্ভার ব্যবহার করে ডাটা আনা (Rate Limit এরর এড়াতে)
+    final response = await http.get(uri).timeout(const Duration(seconds: 45));
+
     if (response.statusCode == 200) {
-      final data = jsonDecode(response.body);
-      return {'url': data['url'], 'title': data['title'], 'thumbnail': data['thumbnail']};
+      return jsonDecode(utf8.decode(response.bodyBytes));
     }
-    throw "Unsupported or invalid link";
+    throw "Proxy server failed to respond";
   }
 
-  // মূল ডাউনলোড লজিক (আপনার দেওয়া Resume লজিকসহ)
   Future<void> _executeDownload(DownloadTask task) async {
     RandomAccessFile? raf;
     try {
@@ -258,15 +270,22 @@ class _HomeScreenState extends State<HomeScreen> {
     _showToast("Download Cancelled");
   }
 
+  // --- এরর হ্যান্ডলিং লজিক (স্ক্রিনশটে আসা Error occurred সমাধানের জন্য) ---
   void _handleTaskError(DownloadTask task, dynamic e) {
+    String displayMsg = "Error occurred";
+    
+    if (e.toString().contains("FileSystemException")) {
+      displayMsg = "Storage Error: Name too long"; // Error 36 সমাধান
+    } else if (e.toString().contains("429")) {
+      displayMsg = "YouTube Limit: Try in 5 min";
+    }
+
     setState(() {
       task.isProcessing = false;
       task.isPaused = false;
-      task.statusText = e.toString().contains('FileSystemException') 
-          ? "Storage Error" 
-          : "Error occurred";
+      task.statusText = displayMsg;
     });
-    _showToast("Error: $e", isError: true);
+    _showToast(displayMsg, isError: true);
   }
 
   void _showToast(String message, {bool isError = false}) {
@@ -286,7 +305,6 @@ class _HomeScreenState extends State<HomeScreen> {
       body: SafeArea(
         child: Column(
           children: [
-            // উপরের ফিক্সড ইনপুট সেকশন
             Padding(
               padding: const EdgeInsets.all(20),
               child: Column(
@@ -298,10 +316,12 @@ class _HomeScreenState extends State<HomeScreen> {
                     decoration: BoxDecoration(color: Colors.white10, borderRadius: BorderRadius.circular(15)),
                     child: TextField(
                       controller: _urlController,
+                      style: const TextStyle(color: Colors.white),
                       decoration: InputDecoration(
                         hintText: "Paste link here...",
+                        hintStyle: const TextStyle(color: Colors.white54),
                         prefixIcon: const Icon(Icons.link, color: Colors.indigo),
-                        suffixIcon: IconButton(icon: const Icon(Icons.paste), onPressed: _pasteFromClipboard),
+                        suffixIcon: IconButton(icon: const Icon(Icons.paste, color: Colors.indigo), onPressed: _pasteFromClipboard),
                         border: InputBorder.none,
                         contentPadding: const EdgeInsets.all(15),
                       ),
@@ -321,7 +341,6 @@ class _HomeScreenState extends State<HomeScreen> {
               ),
             ),
             
-            // ডাউনলোড লিস্ট সেকশন
             Expanded(
               child: ListView.builder(
                 padding: const EdgeInsets.symmetric(horizontal: 20),
@@ -338,7 +357,6 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  // আপনার দেওয়া UI অনুযায়ী কার্ড ডিজাইন
   Widget _buildDownloadCard(DownloadTask task) {
     return Container(
       margin: const EdgeInsets.only(bottom: 15),
@@ -358,7 +376,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   borderRadius: BorderRadius.circular(8),
                   child: task.thumbnailUrl != null 
                       ? Image.network(task.thumbnailUrl!, fit: BoxFit.cover) 
-                      : const Icon(Icons.video_collection),
+                      : const Icon(Icons.video_collection, color: Colors.white54),
                 ),
               ),
               const SizedBox(width: 15),
@@ -366,8 +384,14 @@ class _HomeScreenState extends State<HomeScreen> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(task.videoTitle ?? "Processing...", maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.bold)),
-                    Text(task.statusText, style: const TextStyle(fontSize: 12, color: Colors.white70)),
+                    Text(
+                      task.videoTitle ?? "Processing...", 
+                      maxLines: 2, 
+                      overflow: TextOverflow.ellipsis, 
+                      style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: Colors.white)
+                    ),
+                    const SizedBox(height: 4),
+                    Text(task.statusText, style: const TextStyle(fontSize: 11, color: Colors.white70)),
                   ],
                 ),
               ),
@@ -395,7 +419,7 @@ class _HomeScreenState extends State<HomeScreen> {
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Text("${(task.progress * 100).toStringAsFixed(0)}%"),
+              Text("${(task.progress * 100).toStringAsFixed(0)}%", style: const TextStyle(color: Colors.white70)),
               if (task.isFinished) const Text("Done", style: TextStyle(color: Colors.greenAccent)),
             ],
           ),
