@@ -78,7 +78,8 @@ def extract_media(url: str):
     # কুকি ফাইলের নামসমূহ
     fb_cookies = "facebook_cookies.txt"
     yt_cookies = "youtube_cookies.txt"
-    ig_cookies = "instagram_cookies.txt" # ইনস্টাগ্রাম কুকি ফাইল
+    ig_cookies = "instagram_cookies.txt" 
+    tt_cookies = "tiktok_cookies.txt"
 
     ydl_opts = {
         "format": "best",
@@ -115,6 +116,11 @@ def extract_media(url: str):
         if os.path.exists(ig_cookies):
             ydl_opts["cookiefile"] = ig_cookies
             logging.info("Using Instagram Cookies")
+
+    elif "tiktok.com" in domain:
+        if os.path.exists(tt_cookies):
+            ydl_opts["cookiefile"] = tt_cookies
+            logging.info("Using TikTok Cookies")
 
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
