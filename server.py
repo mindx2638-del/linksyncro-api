@@ -1,50 +1,224 @@
-from flask import Flask, request, jsonify
-from flask_cors import CORS
+from fastapi import FastAPI, HTTPException, Request, Depends
+from fastapi.middleware.cors import CORSMiddleware
 import yt_dlp
-import os
+import logging
+import time
+import ipaddress
+import asyncio
+import hashlib
+from urllib.parse import urlparse
+from concurrent.futures import ThreadPoolExecutor
 
-app = Flask(__name__)
-CORS(app)
+app = FastAPI()
 
-@app.route('/get_video', methods=['GET'])
-def get_video():
-    video_url = request.args.get('url')
-    if not video_url:
-        return jsonify({"status": "error", "message": "No URL provided"}), 400
+# -----------------------------
+# CORS (PRODUCTION SAFE)
+# -----------------------------
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["https://yourdomain.com"],  # ❗ change this
+    allow_credentials=True,
+    allow_methods=["GET"],
+    allow_headers=["*"],
+)
 
-    # অডিওসহ ভিডিও নিশ্চিত করার জন্য উন্নত ফরম্যাট লজিক
+# -----------------------------
+# LOGGING
+# -----------------------------
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(message)s"
+)
+
+# -----------------------------
+# THREAD POOL
+# -----------------------------
+executor = ThreadPoolExecutor(max_workers=10)
+
+# -----------------------------
+# SIMPLE REDIS-LIKE CACHE (replace with real Redis in production)
+# -----------------------------
+cache = {}
+CACHE_TTL = 300
+
+# -----------------------------
+# API KEY SYSTEM (ENTERPRISE SECURITY)
+# -----------------------------
+VALID_API_KEYS = {
+    "demo_key_123",
+    "premium_key_456"
+}
+
+# -----------------------------
+# RATE LIMIT PER API KEY
+# -----------------------------
+rate_store = {}
+RATE_LIMIT = 20
+RATE_WINDOW = 60
+
+# -----------------------------
+# ALLOWED DOMAINS (STRICT)
+# -----------------------------
+ALLOWED_DOMAINS = {
+    "youtube.com",
+    "www.youtube.com",
+    "youtu.be",
+    "m.youtube.com"
+}
+
+# -----------------------------
+# SSRF SAFE CHECK
+# -----------------------------
+def is_private_ip(host):
+    try:
+        return ipaddress.ip_address(host).is_private
+    except:
+        return False
+
+
+def is_valid_url(url: str):
+    try:
+        parsed = urlparse(url)
+
+        if parsed.scheme not in ["http", "https"]:
+            return False
+
+        if not parsed.hostname:
+            return False
+
+        if parsed.hostname in ["localhost", "127.0.0.1"]:
+            return False
+
+        if is_private_ip(parsed.hostname):
+            return False
+
+        # strict allow list
+        if parsed.hostname not in ALLOWED_DOMAINS:
+            return False
+
+        return True
+
+    except:
+        return False
+
+
+# -----------------------------
+# API KEY VALIDATION
+# -----------------------------
+def verify_api_key(request: Request):
+    key = request.headers.get("x-api-key")
+
+    if not key or key not in VALID_API_KEYS:
+        raise HTTPException(status_code=401, detail="Invalid API Key")
+
+    return key
+
+
+# -----------------------------
+# RATE LIMIT PER KEY
+# -----------------------------
+def check_rate_limit(api_key: str):
+    now = time.time()
+
+    if api_key not in rate_store:
+        rate_store[api_key] = []
+
+    rate_store[api_key] = [
+        t for t in rate_store[api_key]
+        if now - t < RATE_WINDOW
+    ]
+
+    if len(rate_store[api_key]) >= RATE_LIMIT:
+        return False
+
+    rate_store[api_key].append(now)
+    return True
+
+
+# -----------------------------
+# CORE YT-DLP ENGINE
+# -----------------------------
+def extract_video(url: str):
+
+    cache_key = hashlib.md5(url.encode()).hexdigest()
+
+    if cache_key in cache:
+        data, ts = cache[cache_key]
+        if time.time() - ts < CACHE_TTL:
+            return data
+
     ydl_opts = {
-        # acodec!=none মানে অডিও থাকতে হবে, vcodec!=none মানে ভিডিও থাকতে হবে
-        'format': 'best[vcodec!=none][acodec!=none]/best',
-        'quiet': True,
-        'no_warnings': True,
-        'noplaylist': True,
-        'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+        "format": "bestvideo+bestaudio/best",
+        "quiet": True,
+        "no_warnings": True,
+        "noplaylist": True,
+        "socket_timeout": 10,
+        "retries": 2,
+        "user_agent": "Mozilla/5.0",
     }
 
+    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+        info = ydl.extract_info(url, download=False)
+
+        download_url = info.get("url")
+
+        if not download_url and "formats" in info:
+            formats = [
+                f for f in info["formats"]
+                if f.get("url") and f.get("vcodec") != "none"
+            ]
+
+            formats.sort(
+                key=lambda x: (x.get("height") or 0, x.get("tbr") or 0),
+                reverse=True
+            )
+
+            if formats:
+                download_url = formats[0]["url"]
+
+        result = {
+            "status": "success",
+            "url": download_url,
+            "title": info.get("title"),
+            "thumbnail": info.get("thumbnail"),
+            "duration": info.get("duration"),
+            "source": info.get("extractor")
+        }
+
+        cache[cache_key] = (result, time.time())
+
+        return result
+
+
+# -----------------------------
+# MAIN API
+# -----------------------------
+@app.get("/get_video")
+async def get_video(url: str, request: Request):
+
+    api_key = verify_api_key(request)
+
+    # RATE LIMIT CHECK
+    if not check_rate_limit(api_key):
+        raise HTTPException(status_code=429, detail="Rate limit exceeded")
+
+    if not url:
+        raise HTTPException(status_code=400, detail="URL required")
+
+    if not is_valid_url(url):
+        raise HTTPException(status_code=400, detail="Unsafe URL detected")
+
     try:
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(video_url, download=False)
-            
-            # অডিওসহ ডাউনলোড ইউআরএল ফিল্টার করা
-            download_url = info.get('url')
-            if not download_url and 'formats' in info:
-                # এমন ফরম্যাট খোঁজা যেখানে অডিও এবং ভিডিও দুটোই আছে
-                muxed_formats = [f for f in info['formats'] if f.get('acodec') != 'none' and f.get('vcodec') != 'none']
-                if muxed_formats:
-                    # সবচেয়ে ভালো কোয়ালিটির ফাইলটি নেওয়া
-                    download_url = muxed_formats[-1].get('url')
+        loop = asyncio.get_event_loop()
+        result = await loop.run_in_executor(executor, extract_video, url)
 
-            return jsonify({
-                "status": "success",
-                "url": download_url,
-                "title": info.get('title', 'Facebook Video'),
-                "thumbnail": info.get('thumbnail'), # থাম্বনেইল পাঠানো হচ্ছে
-                "source": info.get('extractor')
-            })
+        if not result:
+            raise HTTPException(status_code=404, detail="Video not found")
+
+        logging.info(f"API Success: {result.get('title')} | Key: {api_key}")
+
+        return result
+
     except Exception as e:
-        return jsonify({"status": "error", "message": str(e)}), 400
-
-if __name__ == '__main__':
-    port = int(os.environ.get('PORT', 5000))
-    app.run(host='0.0.0.0', port=port)
+        logging.error(str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
