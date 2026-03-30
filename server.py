@@ -37,7 +37,7 @@ RATE_LIMIT = 50
 RATE_WINDOW = 60
 VALID_API_KEYS = {"demo_key_123", "premium_key_456"}
 
-# রেন্ডম ইউজার এজেন্টের লিস্ট (বিনা খরচে ব্লক এড়ানোর প্রথম ধাপ)
+# রেন্ডম ইউজার এজেন্টের লিস্ট
 USER_AGENTS = [
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
     "Mozilla/5.0 (iPhone; CPU iPhone OS 17_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Mobile/15E148 Safari/604.1",
@@ -49,17 +49,21 @@ USER_AGENTS = [
 # HELPERS
 # -----------------------------
 def is_private_ip(host):
-    try: return ipaddress.ip_address(host).is_private
-    except: return False
+    try:
+        return ipaddress.ip_address(host).is_private
+    except:
+        return False
 
 def is_valid_url(url: str):
     try:
         parsed = urlparse(url)
-        if parsed.scheme not in ["http", "https"] or not parsed.hostname: return False
+        if parsed.scheme not in ["http", "https"] or not parsed.hostname:
+            return False
         domain = parsed.hostname.replace("www.", "")
         allowed = ["youtube.com", "youtu.be", "facebook.com", "fb.watch", "fb.com", "instagram.com", "tiktok.com"]
         return any(d in domain for d in allowed)
-    except: return False
+    except:
+        return False
 
 # -----------------------------
 # CORE ENGINE (The "Human" Simulator)
@@ -68,12 +72,14 @@ def extract_media(url: str):
     cache_key = hashlib.md5(url.encode()).hexdigest()
     if cache_key in cache:
         data, ts = cache[cache_key]
-        if time.time() - ts < CACHE_TTL: return data
+        if time.time() - ts < CACHE_TTL:
+            return data
 
-    # কুকি ফাইলের নাম
+    # কুকি ফাইলের নামসমূহ
     fb_cookies = "facebook_cookies.txt"
     yt_cookies = "youtube_cookies.txt"
-    
+    ig_cookies = "instagram_cookies.txt" # ইনস্টাগ্রাম কুকি ফাইল
+
     ydl_opts = {
         "format": "best",
         "quiet": True,
@@ -83,10 +89,9 @@ def extract_media(url: str):
         "retries": 10,
         "nocheckcertificate": True,
         "geo_bypass": True,
-        "user_agent": random.choice(USER_AGENTS), # প্রতিবার আলাদা ডিভাইস সাজবে
+        "user_agent": random.choice(USER_AGENTS),
         "extractor_args": {
             "youtube": {
-                # ইউটিউবকে বলবে রিকোয়েস্টটি মোবাইল অ্যাপ থেকে আসছে (ব্লক হওয়ার সম্ভাবনা ০%)
                 "player_client": ["android", "ios", "mweb"],
                 "player_skip": ["webpage", "configs"]
             }
@@ -94,14 +99,22 @@ def extract_media(url: str):
     }
 
     # ডোমেইন অনুযায়ী অটো কুকিজ সিলেকশন
-    if "facebook.com" in url or "fb.watch" in url or "fb.com" in url:
+    domain = urlparse(url).hostname or ""
+    
+    if any(d in domain for d in ["facebook.com", "fb.watch", "fb.com"]):
         if os.path.exists(fb_cookies):
             ydl_opts["cookiefile"] = fb_cookies
             logging.info("Using FB Cookies")
-    elif "youtube.com" in url or "youtu.be" in url:
+            
+    elif any(d in domain for d in ["youtube.com", "youtu.be"]):
         if os.path.exists(yt_cookies):
             ydl_opts["cookiefile"] = yt_cookies
             logging.info("Using YT Cookies")
+            
+    elif "instagram.com" in domain:
+        if os.path.exists(ig_cookies):
+            ydl_opts["cookiefile"] = ig_cookies
+            logging.info("Using Instagram Cookies")
 
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -109,13 +122,16 @@ def extract_media(url: str):
             
             # ভিডিওর আসল ডাউনলোড লিঙ্ক বের করা
             download_url = info.get("url")
+            
             if not download_url and "formats" in info:
-                # শুধু ভিডিও আছে এমন ফরম্যাট ফিল্টার করা
+                # ভিডিও ফরম্যাট ফিল্টার করা (অডিও এবং ভিডিও উভয় আছে এমন)
                 formats = [f for f in info["formats"] if f.get("url") and f.get("vcodec") != "none"]
                 formats.sort(key=lambda x: (x.get("height") or 0), reverse=True)
-                if formats: download_url = formats[0]["url"]
-
-            if not download_url: return None
+                if formats:
+                    download_url = formats[0]["url"]
+            
+            if not download_url:
+                return None
 
             result = {
                 "status": "success",
@@ -125,8 +141,10 @@ def extract_media(url: str):
                 "duration": info.get("duration"),
                 "source": info.get("extractor_key")
             }
+            
             cache[cache_key] = (result, time.time())
             return result
+            
     except Exception as e:
         logging.error(f"yt-dlp error: {str(e)}")
         return None
@@ -146,8 +164,10 @@ async def get_media(url: str, request: Request):
     user_rates = rate_store.get(key, [])
     user_rates = [t for t in user_rates if now - t < RATE_WINDOW]
     rate_store[key] = user_rates
+    
     if len(user_rates) >= RATE_LIMIT:
         raise HTTPException(status_code=429, detail="Too many requests")
+    
     rate_store[key].append(now)
 
     if not url or not is_valid_url(url):
@@ -157,11 +177,12 @@ async def get_media(url: str, request: Request):
         loop = asyncio.get_event_loop()
         # ThreadPool এ চালানো হচ্ছে যাতে সার্ভার স্লো না হয়
         result = await loop.run_in_executor(executor, extract_media, url)
-
+        
         if not result:
             raise HTTPException(status_code=404, detail="Could not extract video. IP might be blocked or Video is private.")
-
+        
         return result
+        
     except HTTPException as he:
         raise he
     except Exception as e:
@@ -170,4 +191,5 @@ async def get_media(url: str, request: Request):
 
 if __name__ == "__main__":
     import uvicorn
+    # পোর্ট এনভায়রনমেন্ট ভ্যারিয়েবল থেকে নেওয়া হচ্ছে (Render/Heroku এর জন্য প্রয়োজন)
     uvicorn.run(app, host="0.0.0.0", port=int(os.environ.get("PORT", 8000)))
