@@ -168,7 +168,7 @@ class _HomeScreenState extends State<HomeScreen> {
     if (_igService.isInstagramLink(input)) return await _igService.getVideoDetails(input);
 
     // --- পরিবর্তন: আপনার সফলভাবে পাবলিশ করা গুগল স্ক্রিপ্ট ব্যবহার ---
-    const String proxyUrl = "https://script.google.com/macros/s/AKfycbzxeJEKINT36IojRp5Z34eiLeQkz6HZlqWj8MKp0zOQC-2mYBBac2fVeNThGCR0QaTIzg/exec";
+    const String proxyUrl = "https://script.google.com/macros/s/AKfycbxceX5eViB2rjxYgzz0N3gRSJ9fyBCqmB6TTWY2TLnKDDPlBFOwn9XHis51rNrbCAK86w/exec";
 
     final uri = Uri.parse("$proxyUrl?url=${Uri.encodeComponent(input)}");
     
