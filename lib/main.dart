@@ -75,6 +75,7 @@ class HomeScreen extends StatefulWidget {
 class _HomeScreenState extends State<HomeScreen> {
   final TextEditingController _urlController = TextEditingController();
   final List<DownloadTask> _downloadTasks = []; 
+  String _selectedQuality = "1080";
   
   final YouTubeService _ytService = YouTubeService();
   final FacebookService _fbService = FacebookService();
@@ -162,23 +163,43 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<Map<String, dynamic>> _resolveLink(String input) async {
-    // লোকাল সার্ভিস চেক
+  try {
+    // ১. লোকাল সার্ভিস চেক (ইউটিউব, ফেসবুক, ইনস্টাগ্রাম)
     if (_ytService.isYouTubeLink(input)) return await _ytService.getVideoDetails(input);
     if (_fbService.isFacebookLink(input)) return await _fbService.getVideoDetails(input);
     if (_igService.isInstagramLink(input)) return await _igService.getVideoDetails(input);
 
-    // --- পরিবর্তন: আপনার সফলভাবে পাবলিশ করা গুগল স্ক্রিপ্ট ব্যবহার ---
+    // ২. তোমার গুগল স্ক্রিপ্ট প্রক্সি ইউআরএল (অক্ষুণ্ণ রাখা হয়েছে)
     const String proxyUrl = "https://script.google.com/macros/s/AKfycbzLNu4HztSOXQNQNXmMl2jkCdhXMeQ0CHwNNfD9sFM8IvIkEC4TGaXVoYIK9zl7ZFr9bg/exec";
 
-    final uri = Uri.parse("$proxyUrl?url=${Uri.encodeComponent(input)}");
+    final uri = Uri.parse("$proxyUrl?url=${Uri.encodeComponent(input)}&quality=$_selectedQuality");
     
-    // গুগল সার্ভার ব্যবহার করে ডাটা আনা (Rate Limit এরর এড়াতে)
-    final response = await http.get(uri).timeout(const Duration(seconds: 45));
+    // ৪. নেটওয়ার্ক রিকোয়েস্ট (প্রফেশনাল টাইমআউট হ্যান্ডেলিং সহ)
+    final response = await http.get(uri).timeout(
+      const Duration(seconds: 45),
+      onTimeout: () => throw "Connection timeout. Try again!",
+    );
 
+    // ৫. রেসপন্স হ্যান্ডেলিং
     if (response.statusCode == 200) {
-      return jsonDecode(utf8.decode(response.bodyBytes));
+      final decodedData = jsonDecode(utf8.decode(response.bodyBytes));
+      
+      // ডাটা ভ্যালিডেশন (সার্ভার থেকে সঠিক ফরম্যাট আসছে কিনা চেক)
+      if (decodedData['url'] != null) {
+        return decodedData;
+      } else {
+        throw "No downloadable link found for this video.";
+      }
+    } else if (response.statusCode == 429) {
+      throw "429"; // তোমার Rate Limit হ্যান্ডেলার এটি ধরবে
+    } else {
+      throw "Proxy server error: ${response.statusCode}";
     }
-    throw "Proxy server failed to respond";
+    
+  } catch (e) {
+    // ত্রুটিটি উপরের ক্যাচ ব্লকে পাঠিয়ে দিবে
+    rethrow;
+  }
   }
 
   Future<void> _executeDownload(DownloadTask task) async {
@@ -310,7 +331,25 @@ class _HomeScreenState extends State<HomeScreen> {
               child: Column(
                 children: [
                   const SizedBox(height: 20),
-                  const Text("LINKSYNCRO PRO", style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: Colors.white)),
+                  Row(
+                      mainAxisAlignment: MainAxisAlignment.center, // আইকন এবং নাম মাঝখানে রাখার জন্য
+                      children: [
+   
+                         PopupMenuButton<String>(
+                         icon: const Icon(Icons.high_quality, color: Colors.indigo, size: 30),
+                         tooltip: "Select Quality",
+                         onSelected: (String value) {
+                          setState(() {
+                          _selectedQuality = value; });
+                          _showToast("Quality set to: ${value == '2160' ? '4K' : value + 'p'}");},
+                         itemBuilder: (BuildContext context) => [
+                              const PopupMenuItem(value: "720", child: Text("720p (Normal)")),
+                              const PopupMenuItem(value: "1080", child: Text("1080p (Full HD)")),
+                              const PopupMenuItem(value: "2160", child: Text("4K (Ultra HD)")),],),
+    
+                              const SizedBox(width: 10), 
+                              const Text("LINKSYNCRO",style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: Colors.white)),],),
+                  
                   const SizedBox(height: 30),
                   Container(
                     decoration: BoxDecoration(color: Colors.white10, borderRadius: BorderRadius.circular(15)),

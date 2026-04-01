@@ -55,8 +55,8 @@ class YouTubeService {
     }
   }
 
-  /// 3. Get video details and download URL
-  Future<Map<String, String>> getVideoDetails(String url) async {
+  /// 3. Get video details and download URL (সংশোধিত: ৪কে ও কোয়ালিটি লজিকসহ)
+  Future<Map<String, String>> getVideoDetails(String url, {String quality = "1080"}) async {
     try {
       final videoId = _extractVideoId(url.trim());
 
@@ -66,31 +66,40 @@ class YouTubeService {
 
       final video = await _yt.videos.get(videoId);
 
-      /// Check for live/upcoming videos
+      /// Check for live/upcoming videos (তোমার অরিজিনাল লজিক)
       if (video.duration == null || video.duration!.inSeconds == 0) {
         throw "⚠️ Live or upcoming videos cannot be downloaded.";
       }
 
-      final manifest =
-          await _yt.videos.streamsClient.getManifest(videoId);
+      final manifest = await _yt.videos.streamsClient.getManifest(videoId);
 
       String? streamUrl;
 
-      /// Priority 1: muxed (audio + video)
-      if (manifest.muxed.isNotEmpty) {
-        streamUrl =
-            manifest.muxed.withHighestBitrate().url.toString();
-      }
-
-      /// Priority 2: video-only (higher quality)
-      else if (manifest.videoOnly.isNotEmpty) {
-        streamUrl =
-            manifest.videoOnly.withHighestBitrate().url.toString();
-      }
-
-      /// Priority 3: fallback stream
-      else if (manifest.streams.isNotEmpty) {
-        streamUrl = manifest.streams.first.url.toString();
+      // --- নতুন লজিক: ইউজার ৪কে বা ১০৮০পি সিলেক্ট করলে নির্দিষ্ট স্ট্রিম খুঁজবে ---
+      if (quality == "2160") {
+        // ৪কে (4K) এর জন্য প্রথমে videoOnly চেক করা হবে
+        streamUrl = manifest.videoOnly.where((s) => s.videoQuality.name.contains('2160')).firstOrNull?.url.toString() ?? 
+                    manifest.videoOnly.withHighestBitrate().url.toString();
+      } else if (quality == "1080") {
+        // ১০৮০পি (Full HD) এর জন্য muxed অথবা videoOnly চেক করা হবে
+        streamUrl = manifest.muxed.where((s) => s.videoQuality.name.contains('1080')).firstOrNull?.url.toString() ??
+                    manifest.videoOnly.where((s) => s.videoQuality.name.contains('1080')).firstOrNull?.url.toString() ??
+                    manifest.muxed.withHighestBitrate().url.toString();
+      } 
+      // --- তোমার অরিজিনাল Priority ১, ২, ৩ লজিক (যা আগে ছিল) ---
+      else {
+        /// Priority 1: muxed (audio + video)
+        if (manifest.muxed.isNotEmpty) {
+          streamUrl = manifest.muxed.withHighestBitrate().url.toString();
+        }
+        /// Priority 2: video-only (higher quality)
+        else if (manifest.videoOnly.isNotEmpty) {
+          streamUrl = manifest.videoOnly.withHighestBitrate().url.toString();
+        }
+        /// Priority 3: fallback stream
+        else if (manifest.streams.isNotEmpty) {
+          streamUrl = manifest.streams.first.url.toString();
+        }
       }
 
       if (streamUrl == null) {
@@ -104,6 +113,7 @@ class YouTubeService {
       throw "❌ Error: ${e.toString()}";
     }
   }
+
 
   /// 4. Build response map
   Map<String, String> _buildResponse(
