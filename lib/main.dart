@@ -11,6 +11,8 @@ import 'package:media_scanner/media_scanner.dart';
 import 'youtube_service.dart';
 import 'facebook_service.dart';
 import 'instagram_service.dart';
+import 'tiktok_service.dart';
+import 'twitter_service.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -79,6 +81,8 @@ class _HomeScreenState extends State<HomeScreen> {
   final YouTubeService _ytService = YouTubeService();
   final FacebookService _fbService = FacebookService();
   final InstagramService _igService = InstagramService();
+  final TikTokService _ttService = TikTokService();
+  final TwitterService _twService = TwitterService();
 
   final Dio _dio = Dio(BaseOptions(
     connectTimeout: const Duration(seconds: 30),
@@ -166,6 +170,8 @@ class _HomeScreenState extends State<HomeScreen> {
     if (_ytService.isYouTubeLink(input)) return await _ytService.getVideoDetails(input);
     if (_fbService.isFacebookLink(input)) return await _fbService.getVideoDetails(input);
     if (_igService.isInstagramLink(input)) return await _igService.getVideoDetails(input);
+    if (_ttService.isTikTokLink(input)) return await _ttService.getVideoDetails(input);
+    if (_twService.isTwitterLink(input)) return await _twService.getVideoDetails(input);
 
     // --- পরিবর্তন: আপনার সফলভাবে পাবলিশ করা গুগল স্ক্রিপ্ট ব্যবহার ---
     const String proxyUrl = "https://script.google.com/macros/s/AKfycbxCgwOCgImPNArdWTz_Na72kgl2o1MfzUyJ0x0y5aAIOdAIC-AKLf27ePe8I16xY3Co/exec";
