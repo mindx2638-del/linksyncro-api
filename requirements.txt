@@ -1,6 +1,13 @@
 fastapi
-uvicorn
-yt-dlp>=2025.1.15
+uvicorn[standard]
 gunicorn
-httpcore
+
+yt-dlp>=2025.1.15
+
 httpx
+httpcore
+
+brotli
+certifi
+orjson
+python-multipart
