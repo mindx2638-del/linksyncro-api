@@ -9,14 +9,32 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
-  youtube_explode_dart: ^2.5.0
-  url_launcher: ^6.2.5
-  cached_network_image: ^3.3.1
-  cupertino_icons: ^1.0.6
+
+  # ================= CORE =================
   dio: ^5.4.0
+  http: ^1.2.1
+
+  # ================= VIDEO HANDLING =================
+  youtube_explode_dart: ^2.5.0
+
+  # ================= FILE SYSTEM =================
   path_provider: ^2.1.2
   permission_handler: ^11.3.0
   media_scanner: ^2.2.0
+
+  # ================= UI HELPERS =================
+  cached_network_image: ^3.3.1
+  url_launcher: ^6.2.5
+  cupertino_icons: ^1.0.6
+
+  # ================= STABILITY (IMPORTANT) =================
+  flutter_native_splash: ^2.4.1
+  flutter_launcher_icons: ^0.13.1
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^3.0.0
 
 flutter:
   uses-material-design: true

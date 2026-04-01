@@ -1,8 +1,6 @@
 import 'dart:io';
 import 'dart:convert';
 import 'dart:typed_data';
-import 'dart:async';
-
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
@@ -18,9 +16,6 @@ void main() {
   runApp(const LinkSyncroApp());
 }
 
-// -----------------------------
-// MODEL (FIXED THREAD SAFETY)
-// -----------------------------
 class DownloadTask {
   String id;
   String inputUrl;
@@ -50,12 +45,8 @@ class DownloadTask {
   }) : cancelToken = CancelToken();
 }
 
-// -----------------------------
-// APP
-// -----------------------------
 class LinkSyncroApp extends StatelessWidget {
   const LinkSyncroApp({super.key});
-
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
@@ -71,12 +62,8 @@ class LinkSyncroApp extends StatelessWidget {
   }
 }
 
-// -----------------------------
-// HOME
-// -----------------------------
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
-
   @override
   State<HomeScreen> createState() => _HomeScreenState();
 }
@@ -84,17 +71,12 @@ class HomeScreen extends StatefulWidget {
 class _HomeScreenState extends State<HomeScreen> {
   final TextEditingController _urlController = TextEditingController();
   final List<DownloadTask> _downloadTasks = [];
+  
+  final Dio _dio = Dio(BaseOptions(
+    connectTimeout: const Duration(seconds: 30),
+    receiveTimeout: const Duration(minutes: 20),
+  ));
 
-  final Dio _dio = Dio(
-    BaseOptions(
-      connectTimeout: const Duration(seconds: 30),
-      receiveTimeout: const Duration(minutes: 20),
-    ),
-  );
-
-  // -----------------------------
-  // CLIPBOARD
-  // -----------------------------
   Future<void> _pasteFromClipboard() async {
     final data = await Clipboard.getData('text/plain');
     if (data?.text != null) {
@@ -102,129 +84,98 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
-  // -----------------------------
-  // PERMISSION FIXED (Android 13+ SAFE)
-  // -----------------------------
   Future<bool> _handlePermissions() async {
     if (!Platform.isAndroid) return true;
-
-    final storage = await Permission.storage.request();
-    final videos = await Permission.videos.request();
-    final manage = await Permission.manageExternalStorage.request();
-
-    return storage.isGranted || videos.isGranted || manage.isGranted;
+    if (await Permission.videos.request().isGranted || 
+        await Permission.storage.request().isGranted || 
+        await Permission.manageExternalStorage.request().isGranted) {
+      return true;
+    }
+    return false;
   }
 
-  // -----------------------------
-  // ADD TASK
-  // -----------------------------
   void _addNewDownload() async {
     final input = _urlController.text.trim();
-
     if (input.isEmpty) {
       _showToast("Please paste a link first", isError: true);
       return;
     }
-
     if (!await _handlePermissions()) {
       _showToast("Storage permission denied!", isError: true);
       return;
     }
-
     final task = DownloadTask(
       id: DateTime.now().millisecondsSinceEpoch.toString(),
       inputUrl: input,
     );
-
     setState(() {
       _downloadTasks.insert(0, task);
       _urlController.clear();
     });
-
     _startDownloadProcess(task);
   }
 
-  // -----------------------------
-  // LINK RESOLVE (SAFE + TIMEOUT FIXED)
-  // -----------------------------
-  Future<Map<String, dynamic>> _resolveLink(String input) async {
-    const String proxyUrl =
-        "https://script.google.com/macros/s/AKfycbzmu4RAvpZVRTLWcHDX4VOWYwpRMhFipKOTT8Vf1Z93qkouB-vvX_r192FBFmIuCJ3Omw/exec";
-
-    final uri = Uri.parse("$proxyUrl?url=${Uri.encodeComponent(input)}");
-
-    final response =
-        await http.get(uri).timeout(const Duration(seconds: 45));
-
-    if (response.statusCode == 200) {
-      final decoded = jsonDecode(utf8.decode(response.bodyBytes));
-
-      if (decoded['status'] == 'success' || decoded['url'] != null) {
-        return decoded;
-      }
-
-      throw "Extraction failed";
-    }
-
-    if (response.statusCode == 429) {
-      throw "Rate limit exceeded";
-    }
-
-    throw "Server error: ${response.statusCode}";
-  }
-
-  // -----------------------------
-  // START PROCESS
-  // -----------------------------
   Future<void> _startDownloadProcess(DownloadTask task) async {
     try {
       final result = await _resolveLink(task.inputUrl);
-
-      if (!mounted) return;
-
+      
       setState(() {
         task.downloadUrl = result['url'];
         task.videoTitle = result['title'] ?? "Video_${task.id}";
         task.thumbnailUrl = result['thumbnail'];
       });
 
-      if (task.downloadUrl == null) {
-        throw "Invalid response";
-      }
+      if (task.downloadUrl == null) throw "Invalid response from server";
 
       const root = "/storage/emulated/0";
       final folder = Directory("$root/Download/LinkSyncro");
+      if (!await folder.exists()) await folder.create(recursive: true);
 
-      await folder.create(recursive: true);
-
-      String cleanName =
-          task.videoTitle!.replaceAll(RegExp(r'[<>:"/\\|?*]'), '').trim();
-
-      if (cleanName.length > 50) {
-        cleanName = cleanName.substring(0, 50);
+      // ফাইলের নাম ক্লিন করা (Error 36 এড়াতে)
+      String cleanName = task.videoTitle!.replaceAll(RegExp(r'[<>:"/\\|?*#%&{}]'), '').trim();
+      if (cleanName.length > 40) {
+        cleanName = cleanName.substring(0, 40).trim();
       }
-
-      if (cleanName.isEmpty) {
-        cleanName = "Video_${task.id}";
-      }
-
+      if (cleanName.isEmpty) cleanName = "Video_${task.id}";
+      
       task.savePath = "${folder.path}/$cleanName.mp4";
-
       await _executeDownload(task);
     } catch (e) {
       _handleTaskError(task, e);
     }
   }
 
-  // -----------------------------
-  // DOWNLOAD ENGINE (FIXED + STABLE)
-  // -----------------------------
+  // --- আপডেট করা Apps Script Proxy লজিক (Headers সহ) ---
+  Future<Map<String, dynamic>> _resolveLink(String input) async {
+    const String proxyUrl = "https://script.google.com/macros/s/AKfycbyR17jhNw0GvRUMWr7eyBYztckJPIeINHqzXy1SSH4TlkUXJMBv2R-Jg6WIvB6BEv8oig/exec";
+    
+    final uri = Uri.parse("$proxyUrl?url=${Uri.encodeComponent(input)}");
+
+    final response = await http.get(
+      uri,
+      headers: {
+        "Accept": "application/json",
+        "User-Agent": "Mozilla/5.0 (Linux; Android 10) LinkSyncroPro/1.0"
+      },
+    ).timeout(const Duration(seconds: 45));
+
+    if (response.statusCode == 200) {
+      final decodedData = jsonDecode(utf8.decode(response.bodyBytes));
+      if (decodedData['status'] == 'success' || decodedData['url'] != null) {
+        return decodedData;
+      } else {
+        throw "Extraction failed. Check the link.";
+      }
+    } else if (response.statusCode == 429) {
+      throw "Rate limit: Wait a moment";
+    }
+    throw "Proxy Error: ${response.statusCode}";
+  }
+
   Future<void> _executeDownload(DownloadTask task) async {
     RandomAccessFile? raf;
-
     try {
-      final file = File(task.savePath!);
-
+      File file = File(task.savePath!);
       int downloadedBytes = 0;
       if (await file.exists()) {
         downloadedBytes = await file.length();
@@ -232,36 +183,45 @@ class _HomeScreenState extends State<HomeScreen> {
 
       setState(() {
         task.isProcessing = true;
-        task.statusText = "Downloading...";
+        task.isFinished = false;
+        task.statusText = task.isPaused ? "Paused" : "Downloading...";
       });
 
       task.cancelToken = CancelToken();
-
-      final response = await _dio.get(
+      
+      // ইউটিউব ও টিকটক ডাউনলোডের জন্য বিশেষ অপশন
+      Response response = await _dio.get(
         task.downloadUrl!,
+        onReceiveProgress: (received, total) {
+          if (total != -1) {
+            setState(() {
+              task.progress = (received + downloadedBytes) / (total + downloadedBytes);
+            });
+          }
+        },
         options: Options(
           responseType: ResponseType.stream,
+          followRedirects: true,
           headers: {
             "range": "bytes=$downloadedBytes-",
+            // এই User-Agent ছাড়া অনেক সময় 403 Forbidden আসে
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36",
+            "Referer": "https://www.google.com/", 
           },
         ),
         cancelToken: task.cancelToken,
       );
 
       raf = await file.open(mode: FileMode.append);
-
-      final stream = response.data.stream as Stream<Uint8List>;
-
-      await for (final chunk in stream) {
+      Stream<Uint8List> stream = response.data.stream;
+      await for (var chunk in stream) {
         if (task.isPaused) break;
-        raf.writeFromSync(chunk);
+        await raf.writeFrom(chunk);
       }
-
       await raf.close();
 
-      if (!task.isPaused && mounted) {
+      if (!task.isPaused) {
         await MediaScanner.loadMedia(path: task.savePath!);
-
         setState(() {
           task.isProcessing = false;
           task.isFinished = true;
@@ -271,78 +231,51 @@ class _HomeScreenState extends State<HomeScreen> {
       }
     } catch (e) {
       if (raf != null) await raf.close();
-
       if (e is DioException && CancelToken.isCancel(e)) return;
-
       _handleTaskError(task, e);
     }
   }
 
-  // -----------------------------
-  // PAUSE / RESUME FIXED
-  // -----------------------------
   void _togglePauseResume(DownloadTask task) {
     if (task.isPaused) {
-      setState(() {
-        task.isPaused = false;
-        task.statusText = "Resuming...";
-      });
-
+      setState(() => task.isPaused = false);
       _executeDownload(task);
     } else {
       setState(() {
         task.isPaused = true;
         task.statusText = "Paused";
       });
-
-      task.cancelToken.cancel();
+      task.cancelToken.cancel("Paused");
     }
   }
 
-  // -----------------------------
-  // CANCEL FIXED
-  // -----------------------------
   void _cancelDownload(DownloadTask task) {
-    task.cancelToken.cancel();
-
-    final file = File(task.savePath ?? "");
-    if (file.existsSync()) {
-      file.deleteSync();
-    }
-
+    task.cancelToken.cancel("Cancelled");
+    File file = File(task.savePath ?? "");
+    if (file.existsSync()) file.deleteSync();
     setState(() {
       _downloadTasks.remove(task);
     });
-
     _showToast("Download Cancelled");
   }
 
-  // -----------------------------
-  // ERROR HANDLER
-  // -----------------------------
   void _handleTaskError(DownloadTask task, dynamic e) {
-    String msg = "Error occurred";
-
-    if (e.toString().contains("Timeout")) {
-      msg = "Connection Timeout";
+    String displayMsg = "Error occurred";
+    if (e.toString().contains("403")) {
+      displayMsg = "Access Denied (403)";
+    } else if (e.toString().contains("FileSystemException")) {
+      displayMsg = "Storage Error";
     } else if (e.toString().contains("429")) {
-      msg = "Rate limit exceeded";
-    } else if (e.toString().contains("FileSystem")) {
-      msg = "Storage error";
+      displayMsg = "Too many requests";
     }
-
     setState(() {
       task.isProcessing = false;
       task.isPaused = false;
-      task.statusText = msg;
+      task.statusText = displayMsg;
     });
-
-    _showToast(msg, isError: true);
+    _showToast(displayMsg, isError: true);
   }
 
-  // -----------------------------
-  // TOAST
-  // -----------------------------
   void _showToast(String message, {bool isError = false}) {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
@@ -353,15 +286,6 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  @override
-  void dispose() {
-    _urlController.dispose();
-    super.dispose();
-  }
-
-  // -----------------------------
-  // UI (UNCHANGED)
-  // -----------------------------
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -374,31 +298,18 @@ class _HomeScreenState extends State<HomeScreen> {
               child: Column(
                 children: [
                   const SizedBox(height: 20),
-                  const Text(
-                    "LINKSYNCRO PRO",
-                    style: TextStyle(
-                        fontSize: 24,
-                        fontWeight: FontWeight.bold,
-                        color: Colors.white),
-                  ),
+                  const Text("LINKSYNCRO PRO", style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: Colors.white)),
                   const SizedBox(height: 30),
                   Container(
-                    decoration: BoxDecoration(
-                        color: Colors.white10,
-                        borderRadius: BorderRadius.circular(15)),
+                    decoration: BoxDecoration(color: Colors.white10, borderRadius: BorderRadius.circular(15)),
                     child: TextField(
                       controller: _urlController,
                       style: const TextStyle(color: Colors.white),
                       decoration: InputDecoration(
                         hintText: "Paste link here...",
                         hintStyle: const TextStyle(color: Colors.white54),
-                        prefixIcon:
-                            const Icon(Icons.link, color: Colors.indigo),
-                        suffixIcon: IconButton(
-                          icon: const Icon(Icons.paste,
-                              color: Colors.indigo),
-                          onPressed: _pasteFromClipboard,
-                        ),
+                        prefixIcon: const Icon(Icons.link, color: Colors.indigo),
+                        suffixIcon: IconButton(icon: const Icon(Icons.paste, color: Colors.indigo), onPressed: _pasteFromClipboard),
                         border: InputBorder.none,
                         contentPadding: const EdgeInsets.all(15),
                       ),
@@ -409,14 +320,10 @@ class _HomeScreenState extends State<HomeScreen> {
                     style: ElevatedButton.styleFrom(
                       minimumSize: const Size(double.infinity, 50),
                       backgroundColor: Colors.indigo,
-                      shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(15)),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
                     ),
                     onPressed: _addNewDownload,
-                    child: const Text(
-                      "DOWNLOAD NOW",
-                      style: TextStyle(color: Colors.white),
-                    ),
+                    child: const Text("DOWNLOAD NOW", style: TextStyle(color: Colors.white)),
                   ),
                 ],
               ),
@@ -437,7 +344,6 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  // UI CARD (UNCHANGED)
   Widget _buildDownloadCard(DownloadTask task) {
     return Container(
       margin: const EdgeInsets.only(bottom: 15),
@@ -453,16 +359,12 @@ class _HomeScreenState extends State<HomeScreen> {
               Container(
                 width: 80,
                 height: 50,
-                decoration: BoxDecoration(
-                    color: Colors.white10,
-                    borderRadius: BorderRadius.circular(8)),
+                decoration: BoxDecoration(color: Colors.white10, borderRadius: BorderRadius.circular(8)),
                 child: ClipRRect(
                   borderRadius: BorderRadius.circular(8),
-                  child: task.thumbnailUrl != null
-                      ? Image.network(task.thumbnailUrl!,
-                          fit: BoxFit.cover)
-                      : const Icon(Icons.video_collection,
-                          color: Colors.white54),
+                  child: task.thumbnailUrl != null 
+                    ? Image.network(task.thumbnailUrl!, fit: BoxFit.cover, errorBuilder: (c, e, s) => const Icon(Icons.video_collection, color: Colors.white54))
+                    : const Icon(Icons.video_collection, color: Colors.white54),
                 ),
               ),
               const SizedBox(width: 15),
@@ -470,57 +372,43 @@ class _HomeScreenState extends State<HomeScreen> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(task.videoTitle ?? "Processing...",
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                            fontWeight: FontWeight.bold,
-                            fontSize: 13,
-                            color: Colors.white)),
+                    Text(
+                      task.videoTitle ?? "Processing...",
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: Colors.white)
+                    ),
                     const SizedBox(height: 4),
-                    Text(task.statusText,
-                        style: const TextStyle(
-                            fontSize: 11, color: Colors.white70)),
+                    Text(task.statusText, style: const TextStyle(fontSize: 11, color: Colors.white70)),
                   ],
                 ),
               ),
               if (!task.isFinished) ...[
                 IconButton(
-                  icon: Icon(
-                      task.isPaused
-                          ? Icons.play_arrow
-                          : Icons.pause,
-                      color: Colors.white),
+                  icon: Icon(task.isPaused ? Icons.play_arrow : Icons.pause, color: Colors.white),
                   onPressed: () => _togglePauseResume(task),
                 ),
                 IconButton(
-                  icon: const Icon(Icons.close,
-                      color: Colors.redAccent),
+                  icon: const Icon(Icons.close, color: Colors.redAccent),
                   onPressed: () => _cancelDownload(task),
                 ),
-              ] else
-                const Icon(Icons.check_circle,
-                    color: Colors.greenAccent),
+              ] else ...[
+                const Icon(Icons.check_circle, color: Colors.greenAccent),
+              ],
             ],
           ),
           const SizedBox(height: 20),
           LinearProgressIndicator(
             value: task.progress,
             backgroundColor: Colors.white10,
-            valueColor: AlwaysStoppedAnimation(
-                task.isFinished
-                    ? Colors.greenAccent
-                    : Colors.blueAccent),
+            valueColor: AlwaysStoppedAnimation(task.isFinished ? Colors.greenAccent : Colors.blueAccent),
           ),
           const SizedBox(height: 10),
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Text("${(task.progress * 100).toStringAsFixed(0)}%",
-                  style: const TextStyle(color: Colors.white70)),
-              if (task.isFinished)
-                const Text("Done",
-                    style: TextStyle(color: Colors.greenAccent)),
+              Text("${(task.progress * 100).toStringAsFixed(0)}%", style: const TextStyle(color: Colors.white70)),
+              if (task.isFinished) const Text("Done", style: TextStyle(color: Colors.greenAccent)),
             ],
           ),
         ],
