@@ -13,7 +13,7 @@ from concurrent.futures import ThreadPoolExecutor
 # -----------------------------
 # APP INITIALIZATION
 # -----------------------------
-app = FastAPI(title="LinkSyncro Pro API", version="4.0")
+app = FastAPI(title="LinkSyncro Pro API", version="5.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -33,15 +33,14 @@ cache = {}
 CACHE_TTL = 1800 
 VALID_API_KEYS = {"demo_key_123", "premium_key_456"}
 
-# আধুনিক ব্রাউজার এজেন্ট যা ইউটিউব/টিকটক সহজে ব্লক করে না
 USER_AGENTS = [
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/118.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36"
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (iPhone; CPU iPhone OS 17_2 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.2 Mobile/15E148 Safari/604.1"
 ]
 
 # -----------------------------
-# CORE ENGINE (The Magic Starts Here)
+# CORE ENGINE (The Magic)
 # -----------------------------
 def extract_media(url: str):
     cache_key = hashlib.md5(url.encode()).hexdigest()
@@ -50,9 +49,8 @@ def extract_media(url: str):
         if time.time() - ts < CACHE_TTL:
             return data
 
-    # yt-dlp কনফিগারেশন - যা YouTube & TikTok সাপোর্ট করবে
+    # ইউটিউব ব্লকিং এড়াতে বিশেষ extractor_args
     ydl_opts = {
-        # সেরা কোয়ালিটি MP4 সিলেক্ট করা
         "format": "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best",
         "quiet": True,
         "no_warnings": True,
@@ -62,11 +60,15 @@ def extract_media(url: str):
         "socket_timeout": 30,
         "retries": 10,
         "user_agent": random.choice(USER_AGENTS),
-        # ইউটিউব এর "Sign in to confirm you are not a bot" এড়াতে
+        # ইউটিউব এবং টিকটক এর জন্য এই অংশটি খুব গুরুত্বপূর্ণ
         "extractor_args": {
             "youtube": {
                 "player_client": ["android", "ios", "mweb"],
                 "player_skip": ["webpage", "configs"]
+            },
+            "tiktok": {
+                "app_name": "musical_ly",
+                "is_test": False
             }
         },
         "http_headers": {
@@ -76,35 +78,28 @@ def extract_media(url: str):
         }
     }
 
-    # গুরুত্বপূর্ণ: cookies.txt ফাইল থাকলে সেটি ব্যবহার করবে
-    # Render-এ তোমার প্রজেক্টের রুট ফোল্ডারে cookies.txt ফাইলটি আপলোড করে দাও
+    # Cookies Check
     if os.path.exists("cookies.txt"):
         ydl_opts["cookiefile"] = "cookies.txt"
-        logging.info("Using cookies.txt for authentication")
+        logging.info(f"Using cookies.txt for: {url}")
 
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            # সরাসরি তথ্য বের করা
             info = ydl.extract_info(url, download=False)
             
-            # ভিডিও ইউআরএল খোঁজার উন্নত লজিক
-            download_url = None
+            # মেটাডাটা এবং ভিডিও ইউআরএল বের করা
+            download_url = info.get("url")
             
-            # ১. সরাসরি ইউআরএল চেক
-            if "url" in info:
-                download_url = info["url"]
-            
-            # ২. ফরম্যাট লিস্ট থেকে সেরাটি খুঁজে বের করা
+            # যদি সরাসরি ইউআরএল না থাকে (Formats চেক করা)
             if not download_url and "formats" in info:
-                # অডিও এবং ভিডিও দুটোই আছে এমন ফরম্যাট খোঁজা
-                formats = [f for f in info["formats"] if f.get("vcodec") != "none" and f.get("acodec") != "none"]
-                if not formats:
-                    formats = [f for f in info["formats"] if f.get("url")]
+                # অডিও এবং ভিডিও দুটোই আছে এমন ফরম্যাট খোঁজা (720p প্রায়োরিটি)
+                valid_formats = [f for f in info["formats"] if f.get("vcodec") != "none" and f.get("acodec") != "none" and f.get("url")]
+                if not valid_formats:
+                    valid_formats = [f for f in info["formats"] if f.get("url")]
                 
-                if formats:
-                    # রেজোলিউশন অনুযায়ী সর্ট করা
-                    formats.sort(key=lambda x: (x.get("height") or 0), reverse=True)
-                    download_url = formats[0]["url"]
+                if valid_formats:
+                    valid_formats.sort(key=lambda x: (x.get("height") or 0), reverse=True)
+                    download_url = valid_formats[0]["url"]
 
             if not download_url:
                 return None
@@ -115,14 +110,14 @@ def extract_media(url: str):
                 "title": info.get("title", "Video"),
                 "thumbnail": info.get("thumbnail"),
                 "duration": info.get("duration"),
-                "source": info.get("extractor_key", "Unknown")
+                "source": info.get("extractor_key", "Social Media")
             }
 
             cache[cache_key] = (result, time.time())
             return result
 
     except Exception as e:
-        logging.error(f"Error extracting {url}: {str(e)}")
+        logging.error(f"yt-dlp error: {str(e)}")
         return None
 
 # -----------------------------
@@ -130,16 +125,19 @@ def extract_media(url: str):
 # -----------------------------
 @app.get("/get_media")
 async def get_media(url: str, request: Request):
-    # API Key Validation
     api_key = request.headers.get("x-api-key")
     if not api_key or api_key not in VALID_API_KEYS:
-        raise HTTPException(status_code=401, detail="Invalid API Key")
+        raise HTTPException(status_code=401, detail="Unauthorized")
 
     if not url:
-        raise HTTPException(status_code=400, detail="URL is required")
+        raise HTTPException(status_code=400, detail="URL required")
 
-    # URL ক্লিনিং
-    if "facebook.com" in url or "instagram.com" in url or "tiktok.com" in url:
+    # URL Clean up
+    parsed_url = urlparse(url)
+    domain = parsed_url.netloc.lower()
+    
+    # ফেসবুক বা ইন্সটাগ্রামের ট্র্যাকিং প্যারামিটার রিমুভ করা
+    if any(x in domain for x in ["facebook.com", "fb.watch", "instagram.com", "tiktok.com"]):
         url = url.split("?")[0]
 
     try:
@@ -147,7 +145,7 @@ async def get_media(url: str, request: Request):
         result = await loop.run_in_executor(executor, extract_media, url)
         
         if not result:
-            raise HTTPException(status_code=404, detail="Could not extract media. Private or restricted content.")
+            raise HTTPException(status_code=404, detail="Media not found or restricted")
             
         return result
     except Exception as e:
@@ -155,5 +153,4 @@ async def get_media(url: str, request: Request):
 
 if __name__ == "__main__":
     import uvicorn
-    port = int(os.environ.get("PORT", 8000))
-    uvicorn.run(app, host="0.0.0.0", port=port)
+    uvicorn.run(app, host="0.0.0.0", port=8000)
