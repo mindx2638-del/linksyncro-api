@@ -8,6 +8,10 @@ import 'package:dio/dio.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:media_scanner/media_scanner.dart';
 
+import 'youtube_service.dart';
+import 'facebook_service.dart';
+import 'instagram_service.dart';
+
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
   SystemChrome.setSystemUIOverlayStyle(
@@ -70,8 +74,12 @@ class HomeScreen extends StatefulWidget {
 
 class _HomeScreenState extends State<HomeScreen> {
   final TextEditingController _urlController = TextEditingController();
-  final List<DownloadTask> _downloadTasks = [];
+  final List<DownloadTask> _downloadTasks = []; 
   
+  final YouTubeService _ytService = YouTubeService();
+  final FacebookService _fbService = FacebookService();
+  final InstagramService _igService = InstagramService();
+
   final Dio _dio = Dio(BaseOptions(
     connectTimeout: const Duration(seconds: 30),
     receiveTimeout: const Duration(minutes: 20),
@@ -104,17 +112,21 @@ class _HomeScreenState extends State<HomeScreen> {
       _showToast("Storage permission denied!", isError: true);
       return;
     }
+
     final task = DownloadTask(
       id: DateTime.now().millisecondsSinceEpoch.toString(),
       inputUrl: input,
     );
+
     setState(() {
       _downloadTasks.insert(0, task);
       _urlController.clear();
     });
+
     _startDownloadProcess(task);
   }
 
+  // --- ডাউনলোড প্রসেস (Rate Limit এবং Error 36 সমাধানসহ) ---
   Future<void> _startDownloadProcess(DownloadTask task) async {
     try {
       final result = await _resolveLink(task.inputUrl);
@@ -131,45 +143,42 @@ class _HomeScreenState extends State<HomeScreen> {
       final folder = Directory("$root/Download/LinkSyncro");
       if (!await folder.exists()) await folder.create(recursive: true);
 
-      // ফাইলের নাম ক্লিন করা (Error 36 এড়াতে)
-      String cleanName = task.videoTitle!.replaceAll(RegExp(r'[<>:"/\\|?*#%&{}]'), '').trim();
-      if (cleanName.length > 40) {
-        cleanName = cleanName.substring(0, 40).trim();
-      }
-      if (cleanName.isEmpty) cleanName = "Video_${task.id}";
+      // ১. ফাইলের নাম থেকে অবৈধ ক্যারেক্টার সরানো
+      String cleanName = task.videoTitle!.replaceAll(RegExp(r'[<>:"/\\|?*]'), '').trim();
       
+      // ২. Error 36 (Name too long) এড়াতে নাম সর্বোচ্চ ৫০ অক্ষরের মধ্যে রাখা (মোবাইল স্ক্রিনশট অনুযায়ী)
+      if (cleanName.length > 50) {
+        cleanName = cleanName.substring(0, 50).trim();
+      }
+      
+      if (cleanName.isEmpty) cleanName = "Video_${task.id}";
+
       task.savePath = "${folder.path}/$cleanName.mp4";
+
       await _executeDownload(task);
     } catch (e) {
       _handleTaskError(task, e);
     }
   }
 
-  // --- আপডেট করা Apps Script Proxy লজিক (Headers সহ) ---
   Future<Map<String, dynamic>> _resolveLink(String input) async {
-    const String proxyUrl = "https://script.google.com/macros/s/AKfycbyR17jhNw0GvRUMWr7eyBYztckJPIeINHqzXy1SSH4TlkUXJMBv2R-Jg6WIvB6BEv8oig/exec";
-    
-    final uri = Uri.parse("$proxyUrl?url=${Uri.encodeComponent(input)}");
+    // লোকাল সার্ভিস চেক
+    if (_ytService.isYouTubeLink(input)) return await _ytService.getVideoDetails(input);
+    if (_fbService.isFacebookLink(input)) return await _fbService.getVideoDetails(input);
+    if (_igService.isInstagramLink(input)) return await _igService.getVideoDetails(input);
 
-    final response = await http.get(
-      uri,
-      headers: {
-        "Accept": "application/json",
-        "User-Agent": "Mozilla/5.0 (Linux; Android 10) LinkSyncroPro/1.0"
-      },
-    ).timeout(const Duration(seconds: 45));
+    // --- পরিবর্তন: আপনার সফলভাবে পাবলিশ করা গুগল স্ক্রিপ্ট ব্যবহার ---
+    const String proxyUrl = "https://script.google.com/macros/s/AKfycbxsns846mdhcNrberwkvdB12yJ58pVg3yE6b4tbvp6rOWPxdjYvN7xeEDbIfID0_CrqJg/exec";
+
+    final uri = Uri.parse("$proxyUrl?url=${Uri.encodeComponent(input)}");
+    
+    // গুগল সার্ভার ব্যবহার করে ডাটা আনা (Rate Limit এরর এড়াতে)
+    final response = await http.get(uri).timeout(const Duration(seconds: 45));
 
     if (response.statusCode == 200) {
-      final decodedData = jsonDecode(utf8.decode(response.bodyBytes));
-      if (decodedData['status'] == 'success' || decodedData['url'] != null) {
-        return decodedData;
-      } else {
-        throw "Extraction failed. Check the link.";
-      }
-    } else if (response.statusCode == 429) {
-      throw "Rate limit: Wait a moment";
+      return jsonDecode(utf8.decode(response.bodyBytes));
     }
-    throw "Proxy Error: ${response.statusCode}";
+    throw "Proxy server failed to respond";
   }
 
   Future<void> _executeDownload(DownloadTask task) async {
@@ -189,7 +198,6 @@ class _HomeScreenState extends State<HomeScreen> {
 
       task.cancelToken = CancelToken();
       
-      // ইউটিউব ও টিকটক ডাউনলোডের জন্য বিশেষ অপশন
       Response response = await _dio.get(
         task.downloadUrl!,
         onReceiveProgress: (received, total) {
@@ -201,23 +209,26 @@ class _HomeScreenState extends State<HomeScreen> {
         },
         options: Options(
           responseType: ResponseType.stream,
-          followRedirects: true,
-          headers: {
-            "range": "bytes=$downloadedBytes-",
-            // এই User-Agent ছাড়া অনেক সময় 403 Forbidden আসে
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36",
-            "Referer": "https://www.google.com/", 
-          },
+          headers: {"range": "bytes=$downloadedBytes-"},
         ),
         cancelToken: task.cancelToken,
       );
 
+      if (response.statusCode == 416) {
+        if (await file.exists()) await file.delete();
+        setState(() => task.progress = 0);
+        await _executeDownload(task);
+        return;
+      }
+
       raf = await file.open(mode: FileMode.append);
       Stream<Uint8List> stream = response.data.stream;
+      
       await for (var chunk in stream) {
         if (task.isPaused) break;
         await raf.writeFrom(chunk);
       }
+      
       await raf.close();
 
       if (!task.isPaused) {
@@ -259,15 +270,16 @@ class _HomeScreenState extends State<HomeScreen> {
     _showToast("Download Cancelled");
   }
 
+  // --- এরর হ্যান্ডলিং লজিক (স্ক্রিনশটে আসা Error occurred সমাধানের জন্য) ---
   void _handleTaskError(DownloadTask task, dynamic e) {
     String displayMsg = "Error occurred";
-    if (e.toString().contains("403")) {
-      displayMsg = "Access Denied (403)";
-    } else if (e.toString().contains("FileSystemException")) {
-      displayMsg = "Storage Error";
+    
+    if (e.toString().contains("FileSystemException")) {
+      displayMsg = "Storage Error: Name too long"; // Error 36 সমাধান
     } else if (e.toString().contains("429")) {
-      displayMsg = "Too many requests";
+      displayMsg = "YouTube Limit: Try in 5 min";
     }
+
     setState(() {
       task.isProcessing = false;
       task.isPaused = false;
@@ -328,6 +340,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 ],
               ),
             ),
+            
             Expanded(
               child: ListView.builder(
                 padding: const EdgeInsets.symmetric(horizontal: 20),
@@ -357,14 +370,13 @@ class _HomeScreenState extends State<HomeScreen> {
           Row(
             children: [
               Container(
-                width: 80,
-                height: 50,
+                width: 80, height: 50,
                 decoration: BoxDecoration(color: Colors.white10, borderRadius: BorderRadius.circular(8)),
                 child: ClipRRect(
                   borderRadius: BorderRadius.circular(8),
                   child: task.thumbnailUrl != null 
-                    ? Image.network(task.thumbnailUrl!, fit: BoxFit.cover, errorBuilder: (c, e, s) => const Icon(Icons.video_collection, color: Colors.white54))
-                    : const Icon(Icons.video_collection, color: Colors.white54),
+                      ? Image.network(task.thumbnailUrl!, fit: BoxFit.cover) 
+                      : const Icon(Icons.video_collection, color: Colors.white54),
                 ),
               ),
               const SizedBox(width: 15),
@@ -373,9 +385,9 @@ class _HomeScreenState extends State<HomeScreen> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      task.videoTitle ?? "Processing...",
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
+                      task.videoTitle ?? "Processing...", 
+                      maxLines: 2, 
+                      overflow: TextOverflow.ellipsis, 
                       style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: Colors.white)
                     ),
                     const SizedBox(height: 4),
