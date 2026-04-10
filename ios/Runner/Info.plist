@@ -5,21 +5,17 @@
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>CFBundleDisplayName</key>
-	<string>LinkSyncro</string>
+	<string>LinkSyncro Pro</string>
 	<key>CFBundleExecutable</key>
 	<string>$(EXECUTABLE_NAME)</string>
 	<key>CFBundleIdentifier</key>
 	<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
-	<key>CFBundleInfoDictionaryVersion</key>
-	<string>6.0</string>
 	<key>CFBundleName</key>
-	<string>linksyncro</string>
+	<string>LinkSyncro Pro</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
 	<string>$(FLUTTER_BUILD_NAME)</string>
-	<key>CFBundleSignature</key>
-	<string>????</string>
 	<key>CFBundleVersion</key>
 	<string>$(FLUTTER_BUILD_NUMBER)</string>
 	<key>LSRequiresIPhoneOS</key>
@@ -28,10 +24,21 @@
 	<string>LaunchScreen</string>
 	<key>UIMainStoryboardFile</key>
 	<string>Main</string>
+
 	<key>UISupportedInterfaceOrientations</key>
 	<array>
 		<string>UIInterfaceOrientationPortrait</string>
+		<string>UIInterfaceOrientationLandscapeLeft</string>
+		<string>UIInterfaceOrientationLandscapeRight</string>
 	</array>
+	<key>UISupportedInterfaceOrientations~ipad</key>
+	<array>
+		<string>UIInterfaceOrientationPortrait</string>
+		<string>UIInterfaceOrientationPortraitUpsideDown</string>
+		<string>UIInterfaceOrientationLandscapeLeft</string>
+		<string>UIInterfaceOrientationLandscapeRight</string>
+	</array>
+
 	<key>CADisableMinimumFrameDurationOnPhone</key>
 	<true/>
 	<key>UIApplicationSupportsIndirectInputEvents</key>
@@ -42,25 +49,28 @@
 		<key>NSAllowsArbitraryLoads</key>
 		<true/>
 	</dict>
+
 	<key>LSSupportsOpeningDocumentsInPlace</key>
 	<true/>
 	<key>UIFileSharingEnabled</key>
 	<true/>
-	
+
 	<key>NSPhotoLibraryAddUsageDescription</key>
-	<string>LinkSyncro needs permission to save videos to your gallery.</string>
+	<string>We need access to save downloaded videos to your gallery.</string>
 	<key>NSPhotoLibraryUsageDescription</key>
-	<string>LinkSyncro needs permission to access your gallery to manage downloads.</string>
+	<string>We need access to manage and play your saved videos.</string>
+	<key>NSAppleMusicUsageDescription</key>
+	<string>We need access to media playback for background audio features.</string>
 
 	<key>UIBackgroundModes</key>
 	<array>
+		<string>audio</string>
 		<string>fetch</string>
-		<string>remote-notification</string>
 	</array>
 
-	<key>FDAllFilesDownloadedEvent</key>
-	<string>all_files_downloaded</string>
-    <key>FDMaximumConcurrentTasks</key>
-    <integer>5</integer>
+	<key>UIViewControllerBasedStatusBarAppearance</key>
+	<false/>
+	<key>FDMaximumLogSize</key>
+	<integer>1024</integer>
 </dict>
 </plist>

@@ -8,17 +8,36 @@ import 'package:dio/dio.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:media_scanner/media_scanner.dart';
 
+// আপনার লোকাল সার্ভিস ফাইলগুলো নিশ্চিত করুন প্রোজেক্টে আছে
 import 'youtube_service.dart';
 import 'facebook_service.dart';
 import 'instagram_service.dart';
 
-void main() {
+import 'package:photo_manager/photo_manager.dart';
+import 'video_gallery_page.dart'; // আপনার তৈরি করা ফাইল
+import 'video_player_page.dart';  // আপনার তৈরি করা ফাইল
+
+import 'my_audio_handler.dart';
+import 'package:audio_service/audio_service.dart';
+late MyAudioHandler audioHandler;
+
+void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  SystemChrome.setSystemUIOverlayStyle(
-    const SystemUiOverlayStyle(statusBarColor: Colors.transparent),
+
+  audioHandler = await AudioService.init(
+    builder: () => MyAudioHandler(),
+    config: const AudioServiceConfig(
+      androidNotificationChannelId: 'com.linksyncro.pro.audio',
+      androidNotificationChannelName: 'LinkSyncro Playback',
+      androidNotificationIcon: 'mipmap/ic_launcher', 
+      androidShowNotificationBadge: true,
+      androidStopForegroundOnPause: false, // এটি পজ করলে নোটিফিকেশন রাখবে
+    ),
   );
+
   runApp(const LinkSyncroApp());
 }
+
 
 class DownloadTask {
   String id;
@@ -51,16 +70,28 @@ class DownloadTask {
 
 class LinkSyncroApp extends StatelessWidget {
   const LinkSyncroApp({super.key});
+
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
       debugShowCheckedModeBanner: false,
       title: 'LinkSyncro Pro',
+      // ১. লাইট থিম কনফিগারেশন
       theme: ThemeData(
+        useMaterial3: true,
+        brightness: Brightness.light,
+        colorSchemeSeed: Colors.indigo,
+        scaffoldBackgroundColor: const Color(0xFFF5F7FA),
+      ),
+      // ২. ডার্ক থিম কনফিগারেশন (মোবাইলের সিস্টেম অনুযায়ী)
+      darkTheme: ThemeData(
         useMaterial3: true,
         brightness: Brightness.dark,
         colorSchemeSeed: Colors.indigo,
+        scaffoldBackgroundColor: const Color(0xFF0F111A), // Deep Dark
       ),
+      // ৩. সিস্টেম থিম মোড এনাবল করা
+      themeMode: ThemeMode.system,
       home: const HomeScreen(),
     );
   }
@@ -68,18 +99,29 @@ class LinkSyncroApp extends StatelessWidget {
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
+
   @override
   State<HomeScreen> createState() => _HomeScreenState();
 }
 
 class _HomeScreenState extends State<HomeScreen> {
+   @override
+  void initState() {
+    super.initState();
+    _checkPermission();
+  }
+
+  Future<void> _checkPermission() async {
+    if (await Permission.notification.isDenied) {
+      await Permission.notification.request();
+    }
+  }
   final TextEditingController _urlController = TextEditingController();
-  final List<DownloadTask> _downloadTasks = []; 
-  
+  final List<DownloadTask> _downloadTasks = [];
   final YouTubeService _ytService = YouTubeService();
   final FacebookService _fbService = FacebookService();
   final InstagramService _igService = InstagramService();
-
+  
   final Dio _dio = Dio(BaseOptions(
     connectTimeout: const Duration(seconds: 30),
     receiveTimeout: const Duration(minutes: 20),
@@ -94,8 +136,8 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Future<bool> _handlePermissions() async {
     if (!Platform.isAndroid) return true;
-    if (await Permission.videos.request().isGranted || 
-        await Permission.storage.request().isGranted || 
+    if (await Permission.videos.request().isGranted ||
+        await Permission.storage.request().isGranted ||
         await Permission.manageExternalStorage.request().isGranted) {
       return true;
     }
@@ -126,11 +168,9 @@ class _HomeScreenState extends State<HomeScreen> {
     _startDownloadProcess(task);
   }
 
-  // --- ডাউনলোড প্রসেস (Rate Limit এবং Error 36 সমাধানসহ) ---
   Future<void> _startDownloadProcess(DownloadTask task) async {
     try {
       final result = await _resolveLink(task.inputUrl);
-      
       setState(() {
         task.downloadUrl = result['url'];
         task.videoTitle = result['title'] ?? "Video_${task.id}";
@@ -143,18 +183,14 @@ class _HomeScreenState extends State<HomeScreen> {
       final folder = Directory("$root/Download/LinkSyncro");
       if (!await folder.exists()) await folder.create(recursive: true);
 
-      // ১. ফাইলের নাম থেকে অবৈধ ক্যারেক্টার সরানো
+      // ফাইল নেম ক্লিনিং এবং লেন্থ লিমিট (Error 36 Fix)
       String cleanName = task.videoTitle!.replaceAll(RegExp(r'[<>:"/\\|?*]'), '').trim();
-      
-      // ২. Error 36 (Name too long) এড়াতে নাম সর্বোচ্চ ৫০ অক্ষরের মধ্যে রাখা (মোবাইল স্ক্রিনশট অনুযায়ী)
       if (cleanName.length > 50) {
         cleanName = cleanName.substring(0, 50).trim();
       }
-      
       if (cleanName.isEmpty) cleanName = "Video_${task.id}";
 
       task.savePath = "${folder.path}/$cleanName.mp4";
-
       await _executeDownload(task);
     } catch (e) {
       _handleTaskError(task, e);
@@ -162,19 +198,14 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<Map<String, dynamic>> _resolveLink(String input) async {
-    // লোকাল সার্ভিস চেক
     if (_ytService.isYouTubeLink(input)) return await _ytService.getVideoDetails(input);
     if (_fbService.isFacebookLink(input)) return await _fbService.getVideoDetails(input);
     if (_igService.isInstagramLink(input)) return await _igService.getVideoDetails(input);
 
-    // --- পরিবর্তন: আপনার সফলভাবে পাবলিশ করা গুগল স্ক্রিপ্ট ব্যবহার ---
-    const String proxyUrl = "https://script.google.com/macros/s/AKfycbxsns846mdhcNrberwkvdB12yJ58pVg3yE6b4tbvp6rOWPxdjYvN7xeEDbIfID0_CrqJg/exec";
-
+    const String proxyUrl = "https://script.google.com/macros/s/AKfycbx5jpZBr7NSyRDiJ9GcyY12vYjehnBSY0d_sKSA-YOUQnF2uMHS4OhvTkbgVwoAUuqHtg/exec";
     final uri = Uri.parse("$proxyUrl?url=${Uri.encodeComponent(input)}");
-    
-    // গুগল সার্ভার ব্যবহার করে ডাটা আনা (Rate Limit এরর এড়াতে)
-    final response = await http.get(uri).timeout(const Duration(seconds: 45));
 
+    final response = await http.get(uri).timeout(const Duration(seconds: 45));
     if (response.statusCode == 200) {
       return jsonDecode(utf8.decode(response.bodyBytes));
     }
@@ -197,7 +228,7 @@ class _HomeScreenState extends State<HomeScreen> {
       });
 
       task.cancelToken = CancelToken();
-      
+
       Response response = await _dio.get(
         task.downloadUrl!,
         onReceiveProgress: (received, total) {
@@ -223,12 +254,10 @@ class _HomeScreenState extends State<HomeScreen> {
 
       raf = await file.open(mode: FileMode.append);
       Stream<Uint8List> stream = response.data.stream;
-      
       await for (var chunk in stream) {
         if (task.isPaused) break;
         await raf.writeFrom(chunk);
       }
-      
       await raf.close();
 
       if (!task.isPaused) {
@@ -270,16 +299,13 @@ class _HomeScreenState extends State<HomeScreen> {
     _showToast("Download Cancelled");
   }
 
-  // --- এরর হ্যান্ডলিং লজিক (স্ক্রিনশটে আসা Error occurred সমাধানের জন্য) ---
   void _handleTaskError(DownloadTask task, dynamic e) {
     String displayMsg = "Error occurred";
-    
     if (e.toString().contains("FileSystemException")) {
-      displayMsg = "Storage Error: Name too long"; // Error 36 সমাধান
+      displayMsg = "Storage Error: Name too long";
     } else if (e.toString().contains("429")) {
       displayMsg = "YouTube Limit: Try in 5 min";
     }
-
     setState(() {
       task.isProcessing = false;
       task.isPaused = false;
@@ -291,65 +317,121 @@ class _HomeScreenState extends State<HomeScreen> {
   void _showToast(String message, {bool isError = false}) {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: Text(message),
-        backgroundColor: isError ? Colors.red : Colors.indigo,
+        content: Text(message, style: const TextStyle(color: Colors.white)),
+        backgroundColor: isError ? Colors.redAccent : Colors.indigo,
         behavior: SnackBarBehavior.floating,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
       ),
     );
   }
 
-  @override
+ @override
   Widget build(BuildContext context) {
+    final bool isDark = Theme.of(context).brightness == Brightness.dark;
+
     return Scaffold(
-      backgroundColor: const Color(0xFF1A1A2E),
+      // ১. উপরে AppBar যোগ করা হয়েছে যেখানে টাইটেল এবং গ্যালারি বাটন থাকবে
+      appBar: AppBar(
+        backgroundColor: isDark ? const Color(0xFF0F111A) : Colors.white,
+        elevation: 0,
+        centerTitle: false,
+        title: Text(
+          "LINKSYNCRO",
+          style: TextStyle(
+            fontSize: 22,
+            fontWeight: FontWeight.w900,
+            letterSpacing: 1.5,
+            color: isDark ? Colors.white : Colors.indigo[900],
+          ),
+        ),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.video_library_rounded, color: Colors.indigo, size: 28),
+            tooltip: "গ্যালারি",
+            onPressed: () {
+              // আপনার আলাদা করা VideoGalleryPage-এ নিয়ে যাবে
+              Navigator.push(
+                context,
+                MaterialPageRoute(builder: (context) => const VideoGalleryPage()),
+              );
+            },
+          ),
+          const SizedBox(width: 10),
+        ],
+      ),
+
       body: SafeArea(
         child: Column(
           children: [
             Padding(
-              padding: const EdgeInsets.all(20),
+              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
               child: Column(
                 children: [
-                  const SizedBox(height: 20),
-                  const Text("LINKSYNCRO PRO", style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: Colors.white)),
-                  const SizedBox(height: 30),
+                  const SizedBox(height: 10),
+                  // ২. লিঙ্ক পেস্ট করার সুন্দর ডিজাইন করা বক্স
                   Container(
-                    decoration: BoxDecoration(color: Colors.white10, borderRadius: BorderRadius.circular(15)),
+                    decoration: BoxDecoration(
+                      color: isDark ? Colors.white.withOpacity(0.08) : Colors.white,
+                      borderRadius: BorderRadius.circular(18),
+                      boxShadow: isDark ? [] : [
+                        BoxShadow(
+                          color: Colors.black.withOpacity(0.05),
+                          blurRadius: 20,
+                          offset: const Offset(0, 10),
+                        )
+                      ],
+                    ),
                     child: TextField(
                       controller: _urlController,
-                      style: const TextStyle(color: Colors.white),
+                      style: TextStyle(color: isDark ? Colors.white : Colors.black87),
                       decoration: InputDecoration(
-                        hintText: "Paste link here...",
-                        hintStyle: const TextStyle(color: Colors.white54),
-                        prefixIcon: const Icon(Icons.link, color: Colors.indigo),
-                        suffixIcon: IconButton(icon: const Icon(Icons.paste, color: Colors.indigo), onPressed: _pasteFromClipboard),
+                        hintText: "Paste video link here...",
+                        hintStyle: TextStyle(color: isDark ? Colors.white54 : Colors.black38),
+                        prefixIcon: const Icon(Icons.link_rounded, color: Colors.indigo),
+                        suffixIcon: IconButton(
+                          icon: const Icon(Icons.content_paste_rounded, color: Colors.indigo),
+                          onPressed: _pasteFromClipboard,
+                        ),
                         border: InputBorder.none,
-                        contentPadding: const EdgeInsets.all(15),
+                        contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 15),
                       ),
                     ),
                   ),
                   const SizedBox(height: 20),
+                  // ৩. ডাউনলোড বাটন
                   ElevatedButton(
                     style: ElevatedButton.styleFrom(
-                      minimumSize: const Size(double.infinity, 50),
+                      minimumSize: const Size(double.infinity, 55),
                       backgroundColor: Colors.indigo,
+                      foregroundColor: Colors.white,
+                      elevation: 0,
                       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
                     ),
                     onPressed: _addNewDownload,
-                    child: const Text("DOWNLOAD NOW", style: TextStyle(color: Colors.white)),
+                    child: const Text(
+                      "DOWNLOAD NOW", 
+                      style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)
+                    ),
                   ),
                 ],
               ),
             ),
-            
+            // ৪. ডাউনলোড লিস্ট দেখানোর অংশ
             Expanded(
-              child: ListView.builder(
-                padding: const EdgeInsets.symmetric(horizontal: 20),
-                itemCount: _downloadTasks.length,
-                itemBuilder: (context, index) {
-                  final task = _downloadTasks[index];
-                  return _buildDownloadCard(task);
-                },
-              ),
+              child: _downloadTasks.isEmpty 
+                ? Center(
+                    child: Text(
+                      "No downloads yet", 
+                      style: TextStyle(color: isDark ? Colors.white30 : Colors.black26)
+                    )
+                  )
+                : ListView.builder(
+                    padding: const EdgeInsets.symmetric(horizontal: 20),
+                    itemCount: _downloadTasks.length,
+                    itemBuilder: (context, index) {
+                      return _buildDownloadCard(_downloadTasks[index], isDark);
+                    },
+                  ),
             ),
           ],
         ),
@@ -357,26 +439,38 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  Widget _buildDownloadCard(DownloadTask task) {
+
+  Widget _buildDownloadCard(DownloadTask task, bool isDark) {
     return Container(
-      margin: const EdgeInsets.only(bottom: 15),
+      margin: const EdgeInsets.only(bottom: 16),
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: const Color(0xFF252545),
-        borderRadius: BorderRadius.circular(20),
+        color: isDark ? const Color(0xFF1C1F2E) : Colors.white,
+        borderRadius: BorderRadius.circular(24),
+        boxShadow: isDark ? [] : [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.03),
+            blurRadius: 15,
+            offset: const Offset(0, 8),
+          )
+        ],
       ),
       child: Column(
         children: [
           Row(
             children: [
               Container(
-                width: 80, height: 50,
-                decoration: BoxDecoration(color: Colors.white10, borderRadius: BorderRadius.circular(8)),
+                width: 90,
+                height: 55,
+                decoration: BoxDecoration(
+                  color: isDark ? Colors.white10 : Colors.grey[200],
+                  borderRadius: BorderRadius.circular(12),
+                ),
                 child: ClipRRect(
-                  borderRadius: BorderRadius.circular(8),
-                  child: task.thumbnailUrl != null 
-                      ? Image.network(task.thumbnailUrl!, fit: BoxFit.cover) 
-                      : const Icon(Icons.video_collection, color: Colors.white54),
+                  borderRadius: BorderRadius.circular(12),
+                  child: task.thumbnailUrl != null
+                      ? Image.network(task.thumbnailUrl!, fit: BoxFit.cover)
+                      : Icon(Icons.play_circle_fill, color: isDark ? Colors.white24 : Colors.black26),
                 ),
               ),
               const SizedBox(width: 15),
@@ -385,42 +479,62 @@ class _HomeScreenState extends State<HomeScreen> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      task.videoTitle ?? "Processing...", 
-                      maxLines: 2, 
-                      overflow: TextOverflow.ellipsis, 
-                      style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: Colors.white)
+                      task.videoTitle ?? "Processing URL...",
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontWeight: FontWeight.bold,
+                        fontSize: 14,
+                        color: isDark ? Colors.white : Colors.black87,
+                      ),
                     ),
                     const SizedBox(height: 4),
-                    Text(task.statusText, style: const TextStyle(fontSize: 11, color: Colors.white70)),
+                    Text(
+                      task.statusText,
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: task.statusText.contains("Error") ? Colors.redAccent : (isDark ? Colors.white60 : Colors.black54),
+                      ),
+                    ),
                   ],
                 ),
               ),
               if (!task.isFinished) ...[
                 IconButton(
-                  icon: Icon(task.isPaused ? Icons.play_arrow : Icons.pause, color: Colors.white),
+                  icon: Icon(task.isPaused ? Icons.play_arrow_rounded : Icons.pause_rounded),
                   onPressed: () => _togglePauseResume(task),
+                  visualDensity: VisualDensity.compact,
                 ),
                 IconButton(
-                  icon: const Icon(Icons.close, color: Colors.redAccent),
+                  icon: const Icon(Icons.close_rounded, color: Colors.redAccent),
                   onPressed: () => _cancelDownload(task),
+                  visualDensity: VisualDensity.compact,
                 ),
               ] else ...[
-                const Icon(Icons.check_circle, color: Colors.greenAccent),
+                const Icon(Icons.check_circle_rounded, color: Colors.greenAccent),
               ],
             ],
           ),
-          const SizedBox(height: 20),
-          LinearProgressIndicator(
-            value: task.progress,
-            backgroundColor: Colors.white10,
-            valueColor: AlwaysStoppedAnimation(task.isFinished ? Colors.greenAccent : Colors.blueAccent),
+          const SizedBox(height: 18),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(10),
+            child: LinearProgressIndicator(
+              value: task.progress,
+              minHeight: 6,
+              backgroundColor: isDark ? Colors.white10 : Colors.grey[200],
+              valueColor: AlwaysStoppedAnimation(task.isFinished ? Colors.greenAccent : Colors.indigo),
+            ),
           ),
-          const SizedBox(height: 10),
+          const SizedBox(height: 8),
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Text("${(task.progress * 100).toStringAsFixed(0)}%", style: const TextStyle(color: Colors.white70)),
-              if (task.isFinished) const Text("Done", style: TextStyle(color: Colors.greenAccent)),
+              Text(
+                "${(task.progress * 100).toStringAsFixed(0)}%",
+                style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: isDark ? Colors.white70 : Colors.black54),
+              ),
+              if (task.isFinished)
+                const Text("COMPLETED", style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: Colors.greenAccent)),
             ],
           ),
         ],
