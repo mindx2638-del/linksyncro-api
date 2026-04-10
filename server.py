@@ -26,14 +26,14 @@ app.add_middleware(
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 
-# ১০ থেকে বাড়িয়ে ২০ করা হলো যাতে হাই-ট্রাফিক হ্যান্ডেল করা যায়
+# ২০ জন কর্মী সেট করা হয়েছে হাই-ট্রাফিক হ্যান্ডেল করতে
 executor = ThreadPoolExecutor(max_workers=20)
 
 # -----------------------------
 # CACHE & SETTINGS
 # -----------------------------
 cache = {}
-CACHE_TTL = 1200 # ২০ মিনিট ক্যাশ রাখা হবে
+CACHE_TTL = 1200 
 rate_store = {}
 RATE_LIMIT = 50
 RATE_WINDOW = 60
@@ -72,14 +72,13 @@ def extract_media(url: str):
             logging.info(f"Cache Hit: {url}")
             return data
 
-    # ২. কুকি ফাইল পাথ
+    # ২. কুকি ফাইল পাথ (আপনার GitHub-এ থাকা ফাইলের নাম অনুযায়ী)
     fb_cookies = "facebook_cookies.txt"
     yt_cookies = "youtube_cookies.txt"
-    ig_cookies = "instagram_cookies.txt"
+    ig_cookies = "www.instagram.com_cookies.txt" 
 
     # ৩. yt-dlp কনফিগারেশন
     ydl_opts = {
-        # MP4 এবং অডিও-ভিডিও একসাথে আছে এমন ফরম্যাটকে প্রায়োরিটি দেওয়া হয়েছে
         "format": "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best",
         "quiet": True,
         "no_warnings": True,
@@ -114,28 +113,25 @@ def extract_media(url: str):
             ydl_opts["cookiefile"] = yt_cookies
             logging.info("Applying YT Cookies")
     elif "instagram.com" in domain:
+        # ইনস্টাগ্রামের জন্য এক্সট্রা হেডার
+        ydl_opts["http_headers"]["Referer"] = "https://www.instagram.com/"
         if os.path.exists(ig_cookies): 
             ydl_opts["cookiefile"] = ig_cookies
-            logging.info("Applying Instagram Cookies")
+            logging.info(f"Applying Instagram Cookies: {ig_cookies}")
 
     # ৫. এক্সট্রাকশন লজিক
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(url, download=False)
             
-            # মেটাডাটা প্রসেসিং
             download_url = info.get("url")
             
-            # যদি সরাসরি URL না পাওয়া যায়, তবে বেস্ট কম্বাইন্ড ফরম্যাট চেক করা
             if not download_url and "formats" in info:
-                # যেসব ফরম্যাটে ভিডিও এবং অডিও দুটোই আছে (vcodec & acodec != none)
                 valid_formats = [f for f in info["formats"] if f.get("vcodec") != "none" and f.get("acodec") != "none"]
                 if not valid_formats:
-                    # ব্যাকআপ হিসেবে শুধু অডিও বা শুধু ভিডিও ইউআরএল
                     valid_formats = [f for f in info["formats"] if f.get("url")]
                 
                 if valid_formats:
-                    # রেজোলিউশন অনুযায়ী সর্ট করে সবচেয়ে বড়টা নেওয়া
                     valid_formats.sort(key=lambda x: (x.get("height") or 0), reverse=True)
                     download_url = valid_formats[0]["url"]
 
@@ -151,10 +147,8 @@ def extract_media(url: str):
                 "source": info.get("extractor_key", domain)
             }
             
-            # ক্যাশে সেভ করা
             cache[cache_key] = (result, time.time())
             
-            # মেমোরি ম্যানেজমেন্ট (ক্যাশ সাইজ ১০০০ এর বেশি হলে পুরনো গুলো মুছে ফেলা)
             if len(cache) > 1000:
                 cache.pop(next(iter(cache)))
                 
@@ -168,12 +162,10 @@ def extract_media(url: str):
 # -----------------------------
 @app.get("/get_media")
 async def get_media(url: str, request: Request):
-    # ১. API Key Check
     key = request.headers.get("x-api-key")
     if not key or key not in VALID_API_KEYS:
         raise HTTPException(status_code=401, detail="Unauthorized: Invalid API Key")
 
-    # ২. Rate Limit Check
     now = time.time()
     user_rates = rate_store.get(key, [])
     user_rates = [t for t in user_rates if now - t < RATE_WINDOW]
@@ -182,24 +174,22 @@ async def get_media(url: str, request: Request):
         raise HTTPException(status_code=429, detail="Rate limit exceeded")
     rate_store[key].append(now)
 
-    # ৩. URL ভ্যালিডেশন এবং ক্লিনিং
     if not url:
         raise HTTPException(status_code=400, detail="URL is required")
         
-    # ফেসবুক/ইনস্টাগ্রামের ট্র্যাকিং প্যারামিটার ক্লিন করা
+    # ইউআরএল ক্লিন করা
     if "?" in url and ("facebook" in url or "instagram" in url):
         url = url.split("?")[0]
 
     if not is_valid_url(url):
         raise HTTPException(status_code=400, detail="Unsupported or invalid URL")
 
-    # ৪. এক্সিকিউশন
     try:
         loop = asyncio.get_event_loop()
         result = await loop.run_in_executor(executor, extract_media, url)
         
         if not result:
-            raise HTTPException(status_code=404, detail="Could not extract video. Content may be private, restricted, or IP blocked.")
+            raise HTTPException(status_code=404, detail="Could not extract video. Check cookies or URL privacy.")
         
         return result
     except HTTPException as he:
@@ -211,8 +201,7 @@ async def get_media(url: str, request: Request):
 # -----------------------------
 # RUNNER
 # -----------------------------
-if __name__ == "__main__":
+if _name_ == "_main_":
     import uvicorn
-    # Render বা Heroku এর জন্য ডাইনামিক পোর্ট
     port = int(os.environ.get("PORT", 8000))
     uvicorn.run(app, host="0.0.0.0", port=port)
