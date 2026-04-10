@@ -64,7 +64,7 @@ def is_valid_url(url: str):
 # CORE ENGINE
 # -----------------------------
 def extract_media(url: str):
-    # ১. ক্যাশ চেক
+    # ১. ক্যাশ চেক (আপনার আগের লজিক অনুযায়ী)
     cache_key = hashlib.md5(url.encode()).hexdigest()
     if cache_key in cache:
         data, ts = cache[cache_key]
@@ -72,14 +72,14 @@ def extract_media(url: str):
             logging.info(f"Cache Hit: {url}")
             return data
 
-    # ২. কুকি ফাইল পাথ (আপনার GitHub-এ থাকা ফাইলের নাম অনুযায়ী)
+    # ২. কুকি ফাইল পাথ
     fb_cookies = "facebook_cookies.txt"
     yt_cookies = "youtube_cookies.txt"
     ig_cookies = "www.instagram.com_cookies.txt" 
 
-    # ৩. yt-dlp কনফিগারেশন
+    # ৩. yt-dlp কনফিগারেশন (রেজোলিউশন লিস্ট পাওয়ার জন্য আপডেট করা)
     ydl_opts = {
-        "format": "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best",
+        "format": "best", # সব ফরম্যাট দেখার জন্য
         "quiet": True,
         "no_warnings": True,
         "noplaylist": True,
@@ -102,7 +102,7 @@ def extract_media(url: str):
         }
     }
 
-    # ৪. ডোমেইন অনুযায়ী কুকি সিলেকশন
+    # ৪. ডোমেইন অনুযায়ী কুকি সিলেকশন (আপনার অরিজিনাল লজিক)
     domain = urlparse(url).hostname or ""
     if any(d in domain for d in ["facebook.com", "fb.watch", "fb.com"]):
         if os.path.exists(fb_cookies): 
@@ -113,46 +113,71 @@ def extract_media(url: str):
             ydl_opts["cookiefile"] = yt_cookies
             logging.info("Applying YT Cookies")
     elif "instagram.com" in domain:
-        # ইনস্টাগ্রামের জন্য এক্সট্রা হেডার
         ydl_opts["http_headers"]["Referer"] = "https://www.instagram.com/"
         if os.path.exists(ig_cookies): 
             ydl_opts["cookiefile"] = ig_cookies
-            logging.info(f"Applying Instagram Cookies: {ig_cookies}")
+            logging.info(f"Applying Instagram Cookies")
 
     # ৫. এক্সট্রাকশন লজিক
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(url, download=False)
+            formats = info.get("formats", [])
             
-            download_url = info.get("url")
-            
-            if not download_url and "formats" in info:
-                valid_formats = [f for f in info["formats"] if f.get("vcodec") != "none" and f.get("acodec") != "none"]
-                if not valid_formats:
-                    valid_formats = [f for f in info["formats"] if f.get("url")]
-                
-                if valid_formats:
-                    valid_formats.sort(key=lambda x: (x.get("height") or 0), reverse=True)
-                    download_url = valid_formats[0]["url"]
+            video_options = []
+            seen_resolutions = set()
 
-            if not download_url:
+            # লো থেকে হাই রেজোলিউশন (৩৬০পি - ৪কে/৮কে) ফিল্টার করা
+            for f in formats:
+                # যেসব ফরম্যাটে অডিও ও ভিডিও উভয়ই আছে এবং হাইট পাওয়া যাচ্ছে
+                if f.get('vcodec') != 'none' and f.get('height'):
+                    height = f.get('height')
+                    
+                    # ৩৬০পি এর নিচের গুলো বাদ (লো কোয়ালিটি এড়াতে)
+                    if height < 360: continue
+
+                    # রেজোলিউশন লেবেল তৈরি (৩৬০পি, ৪কে, ৮কে)
+                    res_label = f"{height}p"
+                    if height == 2160: res_label = "4K"
+                    elif height == 4320: res_label = "8K"
+
+                    # একই রেজোলিউশন ডুপ্লিকেট এড়ানো
+                    if res_label not in seen_resolutions:
+                        video_options.append({
+                            "quality": res_label,
+                            "url": f.get('url'),
+                            "ext": f.get('ext', 'mp4'),
+                            "size": f.get('filesize') or f.get('filesize_approx')
+                        })
+                        seen_resolutions.add(res_label)
+
+            # রেজোলিউশন অনুযায়ী ছোট থেকে বড় সাজানো
+            video_options.sort(key=lambda x: int(''.join(filter(str.isdigit, x['quality']))) if any(c.isdigit() for c in x['quality']) else 0)
+
+            # যদি কোনো অপশন না পাওয়া যায়, তবে ডিফল্ট সেরা ইউআরএলটি নেওয়া
+            download_url = info.get("url")
+            if not video_options and download_url:
+                 video_options.append({"quality": "Default", "url": download_url, "ext": "mp4"})
+
+            if not video_options:
                 return None
 
             result = {
                 "status": "success",
-                "url": download_url,
                 "title": info.get("title", "Video"),
                 "thumbnail": info.get("thumbnail"),
                 "duration": info.get("duration"),
-                "source": info.get("extractor_key", domain)
+                "source": info.get("extractor_key", domain),
+                "formats": video_options # ফ্ল্যাটার এই লিস্টটি ব্যবহার করবে
             }
             
+            # ক্যাশ স্টোরেজ (আপনার অরিজিনাল লজিক)
             cache[cache_key] = (result, time.time())
-            
             if len(cache) > 1000:
                 cache.pop(next(iter(cache)))
                 
             return result
+            
     except Exception as e:
         logging.error(f"yt-dlp error for {url}: {str(e)}")
         return None
