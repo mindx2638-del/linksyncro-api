@@ -169,229 +169,125 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<void> _startDownloadProcess(DownloadTask task) async {
-  try {
-    final result = await _resolveLink(task.inputUrl);
-
-    final formats = result['formats'];
-
-if (formats == null || formats.isEmpty) {
-  throw "No quality options found";
-}
-
-    // 👇 Quality select popup
-    final selected = await _showQualityPicker(formats);
-
-    // user cancel করলে task remove
-    if (selected == null) {
-      setState(() => _downloadTasks.remove(task));
-      return;
-    }
-
-    // 👇 selected quality set
-    setState(() {
-      task.downloadUrl = selected['url'];
-      task.videoTitle = result['title'] ?? "Video_${task.id}";
-      task.thumbnailUrl = result['thumbnail'];
-    });
-
-    if (task.downloadUrl == null) throw "Invalid response from server";
-
-    const root = "/storage/emulated/0";
-    final folder = Directory("$root/Download/LinkSyncro");
-    if (!await folder.exists()) await folder.create(recursive: true);
-
-    // ✅ file name clean
-    String cleanName = task.videoTitle!
-        .replaceAll(RegExp(r'[<>:"/\\|?*]'), '')
-        .trim();
-
-    if (cleanName.length > 50) {
-      cleanName = cleanName.substring(0, 50).trim();
-    }
-
-    if (cleanName.isEmpty) cleanName = "Video_${task.id}";
-
-    task.savePath = "${folder.path}/$cleanName.mp4";
-
-    // 👇 এখন download শুরু হবে (quality select করার পর)
-    await _executeDownload(task);
-
-  } catch (e) {
-    _handleTaskError(task, e);
-  }
-}
-
-Future<Map<String, dynamic>?> _showQualityPicker(List formats) {
-  return showModalBottomSheet<Map<String, dynamic>>(
-    context: context,
-    shape: const RoundedRectangleBorder(
-      borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-    ),
-    builder: (context) {
-      return ListView.builder(
-        shrinkWrap: true,
-        itemCount: formats.length,
-        itemBuilder: (context, index) {
-          final item = formats[index];
-
-          return ListTile(
-            leading: const Icon(Icons.video_collection, color: Colors.indigo),
-            title: Text(item['quality'] ?? "Unknown"),
-            subtitle: Text(item['ext'] ?? "mp4"),
-            onTap: () {
-              Navigator.pop(context, item);
-            },
-          );
-        },
-      );
-    },
-  );
-}
-
-
- Future<void> _executeDownload(DownloadTask task) async {
-  RandomAccessFile? raf;
-
-  try {
-    File file = File(task.savePath!);
-    int downloadedBytes = 0;
-
-    if (await file.exists()) {
-      downloadedBytes = await file.length();
-    }
-
-    setState(() {
-      task.isProcessing = true;
-      task.isFinished = false;
-      task.statusText = task.isPaused ? "Paused" : "Downloading...";
-    });
-
-    if (task.progress == 0 || task.isPaused == false && task.progress == 0) {
-  task.cancelToken = CancelToken();
-}
-
-    final response = await _dio.get(
-      task.downloadUrl!,
-      options: Options(
-        responseType: ResponseType.stream,
-        headers: {"range": "bytes=$downloadedBytes-"},
-      ),
-      cancelToken: task.cancelToken,
-      onReceiveProgress: (received, total) {
-        if (total != -1) {
-          setState(() {
-            task.progress =
-                (received + downloadedBytes) / (total + downloadedBytes);
-          });
-        }
-      },
-    );
-
-    if (response.statusCode == 416) {
-      if (await file.exists()) await file.delete();
-      setState(() => task.progress = 0);
-      await _executeDownload(task);
-      return;
-    }
-
-    raf = await file.open(mode: FileMode.append);
-    final stream = response.data.stream as Stream<Uint8List>;
-
-    await for (var chunk in stream) {
-  if (task.isPaused || task.cancelToken.isCancelled) break;
-  await raf.writeFrom(chunk);
-}
-
-    await raf.close();
-
-    if (!task.isPaused) {
-      await MediaScanner.loadMedia(path: task.savePath!);
-
+    try {
+      final result = await _resolveLink(task.inputUrl);
       setState(() {
-        task.isProcessing = false;
-        task.isFinished = true;
-        task.progress = 1.0;
-        task.statusText = "Saved to Gallery";
+        task.downloadUrl = result['url'];
+        task.videoTitle = result['title'] ?? "Video_${task.id}";
+        task.thumbnailUrl = result['thumbnail'];
       });
+
+      if (task.downloadUrl == null) throw "Invalid response from server";
+
+      const root = "/storage/emulated/0";
+      final folder = Directory("$root/Download/LinkSyncro");
+      if (!await folder.exists()) await folder.create(recursive: true);
+
+      // ফাইল নেম ক্লিনিং এবং লেন্থ লিমিট (Error 36 Fix)
+      String cleanName = task.videoTitle!.replaceAll(RegExp(r'[<>:"/\\|?*]'), '').trim();
+      if (cleanName.length > 50) {
+        cleanName = cleanName.substring(0, 50).trim();
+      }
+      if (cleanName.isEmpty) cleanName = "Video_${task.id}";
+
+      task.savePath = "${folder.path}/$cleanName.mp4";
+      await _executeDownload(task);
+    } catch (e) {
+      _handleTaskError(task, e);
     }
-  } catch (e) {
-    if (raf != null) await raf.close();
-
-    if (e is DioException && CancelToken.isCancel(e)) return;
-
-    _handleTaskError(task, e);
   }
-}
 
   Future<Map<String, dynamic>> _resolveLink(String input) async {
-  try {
-    // 🔥 1. আগে তোমার local service try করবে
-    if (_ytService.isYouTubeLink(input)) {
-      final res = await _ytService.getVideoDetails(input);
-      if (res['formats'] != null) return res;
-    }
+    if (_ytService.isYouTubeLink(input)) return await _ytService.getVideoDetails(input);
+    if (_fbService.isFacebookLink(input)) return await _fbService.getVideoDetails(input);
+    if (_igService.isInstagramLink(input)) return await _igService.getVideoDetails(input);
 
-    if (_fbService.isFacebookLink(input)) {
-      final res = await _fbService.getVideoDetails(input);
-      if (res['formats'] != null) return res;
-    }
+    const String proxyUrl = "https://script.google.com/macros/s/AKfycbxsns846mdhcNrberwkvdB12yJ58pVg3yE6b4tbvp6rOWPxdjYvN7xeEDbIfID0_CrqJg/exec";
+    final uri = Uri.parse("$proxyUrl?url=${Uri.encodeComponent(input)}");
 
-    if (_igService.isInstagramLink(input)) {
-      final res = await _igService.getVideoDetails(input);
-      if (res['formats'] != null) return res;
-    }
-
-    // 🔥 2. না হলে তোমার FastAPI backend call করবে
-    final uri = Uri.parse(
-      "http://YOUR_SERVER_IP:8000/get_media?url=${Uri.encodeComponent(input)}"
-    );
-
-    final response = await http.get(
-      uri,
-      headers: {"x-api-key": "demo_key_123"},
-    ).timeout(const Duration(seconds: 45));
-
+    final response = await http.get(uri).timeout(const Duration(seconds: 45));
     if (response.statusCode == 200) {
-      return jsonDecode(response.body);
+      return jsonDecode(utf8.decode(response.bodyBytes));
     }
+    throw "Proxy server failed to respond";
+  }
 
-    // 🔥 3. fallback proxy (শেষ option)
-    const proxyUrl =
-        "https://script.google.com/macros/s/AKfycbxsns846mdhcNrberwkvdB12yJ58pVg3yE6b4tbvp6rOWPxdjYvN7xeEDbIfID0_CrqJg/exec";
+  Future<void> _executeDownload(DownloadTask task) async {
+    RandomAccessFile? raf;
+    try {
+      File file = File(task.savePath!);
+      int downloadedBytes = 0;
+      if (await file.exists()) {
+        downloadedBytes = await file.length();
+      }
 
-    final proxyRes = await http
-        .get(Uri.parse("$proxyUrl?url=${Uri.encodeComponent(input)}"))
-        .timeout(const Duration(seconds: 45));
+      setState(() {
+        task.isProcessing = true;
+        task.isFinished = false;
+        task.statusText = task.isPaused ? "Paused" : "Downloading...";
+      });
 
-    if (proxyRes.statusCode == 200) {
-      return jsonDecode(utf8.decode(proxyRes.bodyBytes));
+      task.cancelToken = CancelToken();
+
+      Response response = await _dio.get(
+        task.downloadUrl!,
+        onReceiveProgress: (received, total) {
+          if (total != -1) {
+            setState(() {
+              task.progress = (received + downloadedBytes) / (total + downloadedBytes);
+            });
+          }
+        },
+        options: Options(
+          responseType: ResponseType.stream,
+          headers: {"range": "bytes=$downloadedBytes-"},
+        ),
+        cancelToken: task.cancelToken,
+      );
+
+      if (response.statusCode == 416) {
+        if (await file.exists()) await file.delete();
+        setState(() => task.progress = 0);
+        await _executeDownload(task);
+        return;
+      }
+
+      raf = await file.open(mode: FileMode.append);
+      Stream<Uint8List> stream = response.data.stream;
+      await for (var chunk in stream) {
+        if (task.isPaused) break;
+        await raf.writeFrom(chunk);
+      }
+      await raf.close();
+
+      if (!task.isPaused) {
+        await MediaScanner.loadMedia(path: task.savePath!);
+        setState(() {
+          task.isProcessing = false;
+          task.isFinished = true;
+          task.progress = 1.0;
+          task.statusText = "Saved to Gallery";
+        });
+      }
+    } catch (e) {
+      if (raf != null) await raf.close();
+      if (e is DioException && CancelToken.isCancel(e)) return;
+      _handleTaskError(task, e);
     }
-
-    throw "All servers failed";
-  } catch (e) {
-    throw "Resolve failed: $e";
   }
-}
- 
- void _togglePauseResume(DownloadTask task) {
-  if (task.isPaused) {
-    setState(() {
-      task.isPaused = false;
-      task.statusText = "Resuming...";
-    });
 
-    task.cancelToken = CancelToken(); // 🔥 IMPORTANT
-    _executeDownload(task);
-
-  } else {
-    setState(() {
-      task.isPaused = true;
-      task.statusText = "Paused";
-    });
-
-    task.cancelToken.cancel("Paused");
+  void _togglePauseResume(DownloadTask task) {
+    if (task.isPaused) {
+      setState(() => task.isPaused = false);
+      _executeDownload(task);
+    } else {
+      setState(() {
+        task.isPaused = true;
+        task.statusText = "Paused";
+      });
+      task.cancelToken.cancel("Paused");
+    }
   }
-}
 
   void _cancelDownload(DownloadTask task) {
     task.cancelToken.cancel("Cancelled");
