@@ -5,6 +5,7 @@ import time
 import asyncio
 import hashlib
 import os
+import re
 from threading import Lock
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -14,19 +15,21 @@ from concurrent.futures import ThreadPoolExecutor
 # -----------------------------
 # APP INITIALIZATION
 # -----------------------------
-app = FastAPI(title="LinkSyncro Media API", version="4.0")
+app = FastAPI(title="LinkSyncro Media API", version="4.1")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # 👉 production এ domain বসাও
+    allow_origins=["*"],  # ⚠️ production এ domain বসাও
     allow_credentials=True,
     allow_methods=["GET"],
     allow_headers=["*"],
 )
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(message)s"
+)
 
-# 👉 optimized thread pool
 executor = ThreadPoolExecutor(max_workers=10)
 
 # -----------------------------
@@ -61,11 +64,22 @@ ALLOWED_DOMAINS = (
 # -----------------------------
 # HELPERS
 # -----------------------------
+
+def clean_url(url: str):
+    """Remove invalid trailing characters like । | space etc"""
+    url = url.strip()
+    url = re.sub(r"[।.,!?| ]+$", "", url)
+    return url
+
+
 def is_valid_url(url: str):
     try:
         parsed = urlparse(url)
         domain = (parsed.hostname or "").replace("www.", "")
-        return domain.endswith(ALLOWED_DOMAINS)
+
+        # FIXED: correct domain validation
+        return any(domain == d or domain.endswith("." + d) for d in ALLOWED_DOMAINS)
+
     except:
         return False
 
@@ -79,7 +93,6 @@ def get_ordered_cookies(site_key: str):
         if f.startswith(site_key) and f.endswith(".txt")
     ]
 
-    # 👉 correct numeric sorting (instagram_1, instagram_2...)
     def extract_number(name):
         try:
             return int(name.split("_")[-1].split(".")[0])
@@ -138,7 +151,7 @@ def extract_media(url: str):
             "user_agent": random.choice(USER_AGENTS),
             "http_headers": {
                 "Referer": referer,
-                "Accept": "/",
+                "Accept": "/",   # FIXED
             },
         }
 
@@ -163,9 +176,10 @@ def extract_media(url: str):
                     valid_formats = [
                         f for f in info["formats"]
                         if f.get("vcodec") != "none" and f.get("acodec") != "none"
-                    ] or [
-                        f for f in info["formats"] if f.get("url")
                     ]
+
+                    if not valid_formats:
+                        valid_formats = [f for f in info["formats"] if f.get("url")]
 
                     if valid_formats:
                         valid_formats.sort(
@@ -187,14 +201,13 @@ def extract_media(url: str):
                     with cache_lock:
                         cache[cache_key] = (result, time.time())
 
-                        # 👉 prevent memory overflow
                         if len(cache) > 1000:
-                            cache.pop(next(iter(cache)))
+                            cache.clear()  # safer
 
                     return result
 
         except Exception as e:
-            logging.warning(f"Failed ({cookie_path}): {str(e)}")
+            logging.error(f"YT-DLP ERROR ({cookie_path}): {str(e)}")
             continue
 
     return None
@@ -215,16 +228,18 @@ async def get_media(url: str, request: Request):
     user_rates = rate_store.get(key, [])
 
     user_rates = [t for t in user_rates if now - t < RATE_WINDOW]
-    rate_store[key] = user_rates
 
     if len(user_rates) >= RATE_LIMIT:
         raise HTTPException(status_code=429, detail="Rate limit exceeded")
 
     user_rates.append(now)
+    rate_store[key] = user_rates
 
-    # VALIDATION
     if not url:
         raise HTTPException(status_code=400, detail="URL is required")
+
+    # FIXED URL CLEANING
+    url = clean_url(url)
 
     if "?" in url and ("facebook" in url or "instagram" in url):
         url = url.split("?")[0]
