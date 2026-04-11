@@ -2,6 +2,7 @@ fastapi
 uvicorn
 gunicorn
 yt-dlp>=2025.01.15
-httpcore
+firebase-admin
 httpx
 requests
+python-multipart
