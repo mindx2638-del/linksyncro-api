@@ -66,9 +66,14 @@ ALLOWED_DOMAINS = (
 # -----------------------------
 
 def clean_url(url: str):
-    """Remove invalid trailing characters like । | space etc"""
+    if not url:
+        return ""
+
     url = url.strip()
-    url = re.sub(r"[।.,!?| ]+$", "", url)
+
+    # remove only garbage characters at end (SAFE)
+    url = re.sub(r"[।.,!?|—\s\u200b\u200c\u200d]+$", "", url)
+
     return url
 
 
