@@ -198,37 +198,18 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<Map<String, dynamic>> _resolveLink(String input) async {
-    // লোকাল সার্ভিসগুলো আগে চেক করবে
     if (_ytService.isYouTubeLink(input)) return await _ytService.getVideoDetails(input);
     if (_fbService.isFacebookLink(input)) return await _fbService.getVideoDetails(input);
     if (_igService.isInstagramLink(input)) return await _igService.getVideoDetails(input);
 
-    // সরাসরি Render API লিঙ্ক (শেষে /get_media থাকতে হবে)
-    const String pythonApiUrl = "https://linksyncro-api-1.onrender.com/get_media";
-    
-    try {
-      final uri = Uri.parse("$pythonApiUrl?url=${Uri.encodeComponent(input)}");
+    const String proxyUrl = "https://script.google.com/macros/s/AKfycbxsns846mdhcNrberwkvdB12yJ58pVg3yE6b4tbvp6rOWPxdjYvN7xeEDbIfID0_CrqJg/exec";
+    final uri = Uri.parse("$proxyUrl?url=${Uri.encodeComponent(input)}");
 
-      final response = await http.get(
-        uri,
-        headers: {
-          "x-api-key": "demo_key_123", // আপনার পাইথন কোডের API_KEY এর সাথে হুবহু মিল থাকতে হবে
-        },
-      ).timeout(const Duration(seconds: 60)); // Render জাগার জন্য ৬০ সেকেন্ড সময় দেওয়া হলো
-
-      if (response.statusCode == 200) {
-        return jsonDecode(utf8.decode(response.bodyBytes));
-      } else {
-        throw "Status: ${response.statusCode}";
-      }
-    } catch (e) {
-      debugPrint("Full Error: $e");
-      // এরর মেসেজটি ইউজারকে দেখাবে
-      if (e.toString().contains("TimeoutException")) {
-        throw "সার্ভার জাগতে দেরি করছে। দয়া করে ৫ সেকেন্ড পর আবার চেষ্টা করুন।";
-      }
-      throw "ভিডিওর তথ্য পাওয়া যায়নি।";
+    final response = await http.get(uri).timeout(const Duration(seconds: 45));
+    if (response.statusCode == 200) {
+      return jsonDecode(utf8.decode(response.bodyBytes));
     }
+    throw "Proxy server failed to respond";
   }
 
   Future<void> _executeDownload(DownloadTask task) async {

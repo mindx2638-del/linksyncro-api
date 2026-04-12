@@ -1,10 +1,7 @@
 fastapi
 uvicorn
 gunicorn
-yt-dlp>=2025.1.15
-firebase-admin
+yt-dlp>=2025.01.15
+httpcore
 httpx
 requests
-python-multipart
-# অডিও-ভিডিও মার্জিং ফিক্স করতে এটি যোগ করতে পারেন
-httpcore==0.17.3
