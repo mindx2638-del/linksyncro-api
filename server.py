@@ -246,12 +246,8 @@ async def get_media(url: str, request: Request):
     # FIXED URL CLEANING
     url = clean_url(url)
 
-    if "facebook.com" in url or "fb.watch" in url:
-       
-        url = re.sub(r'(\?|&)(fbclid|ref|mibextid|app|rdid|s)=[^&]+', '', url)
-    elif "instagram.com" in url:
-        if "?" in url:
-            url = url.split("?")[0]
+    if "?" in url and ("facebook" in url or "instagram" in url):
+        url = url.split("?")[0]
 
     if not is_valid_url(url):
         raise HTTPException(status_code=400, detail="Invalid URL")
