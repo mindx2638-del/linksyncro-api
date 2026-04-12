@@ -300,18 +300,20 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   void _handleTaskError(DownloadTask task, dynamic e) {
-    String displayMsg = "Error occurred";
-    if (e.toString().contains("FileSystemException")) {
-      displayMsg = "Storage Error: Name too long";
-    } else if (e.toString().contains("429")) {
-      displayMsg = "YouTube Limit: Try in 5 min";
-    }
+    // এখন 'Error occurred' এর বদলে সরাসরি আসল এরর মেসেজটি দেখা যাবে
+    String displayMsg = e.toString(); 
+    
     setState(() {
       task.isProcessing = false;
       task.isPaused = false;
       task.statusText = displayMsg;
     });
+    
+    // টোস্ট মেসেজেও আসল এরর দেখাবে
     _showToast(displayMsg, isError: true);
+    
+    // কনসোলেও প্রিন্ট হবে যেন আপনি ডিবাগ করতে পারেন
+    print("DEBUG ERROR: $displayMsg");
   }
 
   void _showToast(String message, {bool isError = false}) {
