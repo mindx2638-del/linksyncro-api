@@ -50,8 +50,13 @@ def is_valid_url(url: str):
         parsed = urlparse(url)
         if parsed.scheme not in ["http", "https"] or not parsed.hostname:
             return False
-        domain = parsed.hostname.replace("www.", "")
-        allowed = ["youtube.com", "youtu.be", "facebook.com", "fb.watch", "fb.com", "instagram.com", "tiktok.com"]
+        domain = parsed.hostname.lower().replace("www.", "")
+        allowed = [
+            "youtube.com", "youtu.be", 
+            "facebook.com", "fb.watch", "fb.com", 
+            "instagram.com", 
+            "tiktok.com", "vt.tiktok.com", "vm.tiktok.com"
+        ]
         return any(d in domain for d in allowed)
     except:
         return False
@@ -63,7 +68,10 @@ def get_cookie_files(domain):
         "fb": "facebook_cookies",
         "youtube": "youtube_cookies",
         "youtu.be": "youtube_cookies",
-        "instagram": "instagram_cookies"
+        "instagram": "instagram_cookies",
+        "tiktok": "tiktok_cookies",
+        "vt.tiktok": "tiktok_cookies",
+        "vm.tiktok": "tiktok_cookies"
     }
     
     target_folder = ""
@@ -119,7 +127,8 @@ def extract_media(url: str):
             "extractor_args": {
                 "youtube": {"player_client": ["android", "ios", "mweb"], "player_skip": ["webpage", "configs"]},
                 "instagram": {"force_subtitles": False},
-                "facebook": {"force_generic_extractor": False}
+                "facebook": {"force_generic_extractor": False},
+                "tiktok": {"app_name": "google_play", "is_test": False}
             }
         }
 

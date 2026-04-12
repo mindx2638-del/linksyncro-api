@@ -12,6 +12,7 @@ import 'package:media_scanner/media_scanner.dart';
 import 'youtube_service.dart';
 import 'facebook_service.dart';
 import 'instagram_service.dart';
+import 'tiktok_service.dart'; 
 
 import 'package:photo_manager/photo_manager.dart';
 import 'video_gallery_page.dart'; // আপনার তৈরি করা ফাইল
@@ -121,6 +122,7 @@ class _HomeScreenState extends State<HomeScreen> {
   final YouTubeService _ytService = YouTubeService();
   final FacebookService _fbService = FacebookService();
   final InstagramService _igService = InstagramService();
+  final TikTokService _tiktokService = TikTokService(); 
   
   final Dio _dio = Dio(BaseOptions(
     connectTimeout: const Duration(seconds: 30),
@@ -198,19 +200,48 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<Map<String, dynamic>> _resolveLink(String input) async {
-    if (_ytService.isYouTubeLink(input)) return await _ytService.getVideoDetails(input);
-    if (_fbService.isFacebookLink(input)) return await _fbService.getVideoDetails(input);
-    if (_igService.isInstagramLink(input)) return await _igService.getVideoDetails(input);
+  // ১. নির্দিষ্ট সার্ভিসগুলো চেক করা
+  if (_ytService.isYouTubeLink(input)) return await _ytService.getVideoDetails(input);
+  if (_fbService.isFacebookLink(input)) return await _fbService.getVideoDetails(input);
+  if (_igService.isInstagramLink(input)) return await _igService.getVideoDetails(input);
+  if (_tiktokService.isTikTokLink(input)) return await _tiktokService.getVideoDetails(input);
 
-    const String proxyUrl = "https://script.google.com/macros/s/AKfycbxsns846mdhcNrberwkvdB12yJ58pVg3yE6b4tbvp6rOWPxdjYvN7xeEDbIfID0_CrqJg/exec";
-    final uri = Uri.parse("$proxyUrl?url=${Uri.encodeComponent(input)}");
+  // ২. আপনার পাইথন এপিআই ইউআরএল (Render/Heroku থেকে পাওয়া)
+  const String pythonApiUrl = "https://your-api-name.onrender.com/get_media";
+  
+  try {
+    final uri = Uri.parse("$pythonApiUrl?url=${Uri.encodeComponent(input)}");
 
-    final response = await http.get(uri).timeout(const Duration(seconds: 45));
+    // পাইথন কোডে যেহেতু API Key সেট করেছিলেন, তাই এখানে headers যোগ করতে হবে
+    final response = await http.get(
+      uri,
+      headers: {
+        "x-api-key": "demo_key_123", // আপনার পাইথন কোডের VALID_API_KEYS এর সাথে মিল রাখুন
+      },
+    ).timeout(const Duration(seconds: 45));
+
     if (response.statusCode == 200) {
       return jsonDecode(utf8.decode(response.bodyBytes));
+    } else if (response.statusCode == 401) {
+      throw "Invalid API Key";
+    } else {
+      throw "Server returned error: ${response.statusCode}";
     }
-    throw "Proxy server failed to respond";
+  } catch (e) {
+    // যদি আপনার পাইথন এপিআই কাজ না করে, তবে ব্যাকআপ হিসেবে গুগল স্ক্রিপ্ট রাখতে পারেন
+    logging.error("Python API failed, trying backup...");
+    
+    // ব্যাকআপ হিসেবে আপনার আগের গুগল স্ক্রিপ্ট (ঐচ্ছিক)
+    const String backupUrl = "https://script.google.com/macros/s/AKfycbxsns846mdhcNrberwkvdB12yJ58pVg3yE6b4tbvp6rOWPxdjYvN7xeEDbIfID0_CrqJg/exec";
+    final backupUri = Uri.parse("$backupUrl?url=${Uri.encodeComponent(input)}");
+    final bResponse = await http.get(backupUri).timeout(const Duration(seconds: 45));
+    
+    if (bResponse.statusCode == 200) {
+      return jsonDecode(utf8.decode(bResponse.bodyBytes));
+    }
+    throw "Both primary and backup servers failed";
   }
+}
 
   Future<void> _executeDownload(DownloadTask task) async {
     RandomAccessFile? raf;
