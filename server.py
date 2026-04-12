@@ -94,7 +94,7 @@ def get_cookie_files(domain):
 # CORE ENGINE
 # -----------------------------
 def extract_media(url: str):
-    # ক্যাশ চেক
+    # ১. ক্যাশ চেক
     cache_key = hashlib.md5(url.encode()).hexdigest()
     if cache_key in cache:
         data, ts = cache[cache_key]
@@ -104,11 +104,14 @@ def extract_media(url: str):
 
     domain = urlparse(url).hostname or ""
     
-    # কুকি লিস্টের শুরুতে None রাখা হয়েছে যাতে প্রথমে কুকি ছাড়া ট্রাই করে
+    # কুকি লিস্ট (প্রথমে কুকি ছাড়া, তারপর কুকি দিয়ে চেষ্টা)
     cookie_list = [None] 
     cookie_list.extend(get_cookie_files(domain))
 
     for cookie_path in cookie_list:
+        # টিকটকের জন্য রেফারার এবং ইউজার এজেন্ট ডাইনামিক করা হয়েছে
+        is_tiktok = "tiktok" in domain
+        
         ydl_opts = {
             "format": "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best",
             "quiet": True,
@@ -120,9 +123,10 @@ def extract_media(url: str):
             "geo_bypass": True,
             "user_agent": random.choice(USER_AGENTS),
             "http_headers": {
-                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+                "Accept": "/",
                 "Accept-Language": "en-US,en;q=0.5",
-                "Referer": "https://www.google.com/",
+                # টিকটকের জন্য গুগল রেফারার দিলে অনেক সময় ৪MD৩ দেয়, তাই টিকটক রেফারার ব্যবহার করুন
+                "Referer": "https://www.tiktok.com/" if is_tiktok else "https://www.google.com/",
             },
             "extractor_args": {
                 "youtube": {"player_client": ["android", "ios", "mweb"], "player_skip": ["webpage", "configs"]},
@@ -134,23 +138,33 @@ def extract_media(url: str):
 
         if cookie_path:
             ydl_opts["cookiefile"] = cookie_path
-            logging.info(f"Attempting with Cookie: {cookie_path}")
-        else:
-            logging.info(f"Attempting WITHOUT cookies for: {url}")
 
         try:
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 info = ydl.extract_info(url, download=False)
                 
-                download_url = info.get("url")
+                # ডাউনলোড ইউআরএল খোঁজার উন্নত লজিক
+                download_url = None
                 
-                # যদি সরাসরি URL না থাকে, ফরম্যাট লিস্ট চেক করা (আপনার অরিজিনাল লজিক)
+                # অপশন ১: সরাসরি ইউআরএল চেক
+                temp_url = info.get("url")
+                if temp_url and "403" not in temp_url:
+                    download_url = temp_url
+
+                # অপশন ২: যদি সরাসরি না পাওয়া যায়, তবে ফরম্যাট লিস্ট চেক
                 if not download_url and "formats" in info:
-                    valid_formats = [f for f in info["formats"] if f.get("vcodec") != "none" and f.get("acodec") != "none"]
-                    if not valid_formats:
-                        valid_formats = [f for f in info["formats"] if f.get("url")]
+                    # ভিডিও এবং অডিও দুটোই আছে এমন mp4 ফরম্যাট খোঁজা (বিশেষ করে টিকটকের জন্য)
+                    valid_formats = [
+                        f for f in info["formats"] 
+                        if f.get("url") and f.get("vcodec") != "none" and f.get("acodec") != "none"
+                    ]
                     
+                    if not valid_formats:
+                        # যদি কম্বাইন্ড ফরম্যাট না থাকে, তবে শুধু ইউআরএল আছে এমন ফরম্যাট
+                        valid_formats = [f for f in info["formats"] if f.get("url")]
+
                     if valid_formats:
+                        # রেজোলিউশন অনুযায়ী সর্ট করা (সবচেয়ে ভালোটা আগে)
                         valid_formats.sort(key=lambda x: (x.get("height") or 0), reverse=True)
                         download_url = valid_formats[0]["url"]
 
@@ -164,6 +178,7 @@ def extract_media(url: str):
                         "source": info.get("extractor_key", domain)
                     }
                     
+                    # ক্যাশে সেভ করা
                     cache[cache_key] = (result, time.time())
                     if len(cache) > 1000:
                         cache.pop(next(iter(cache)))
@@ -171,11 +186,8 @@ def extract_media(url: str):
                     return result
                     
         except Exception as e:
-            if not cookie_path:
-                logging.warning(f"Failed without cookies. Error: {str(e)}. Now trying with available cookies...")
-            else:
-                logging.error(f"Failed with cookie {cookie_path}: {str(e)}")
-            continue # বর্তমান অপশন কাজ না করলে লুপের পরের কুকি ট্রাই করবে
+            logging.error(f"Error with {cookie_path or 'No Cookie'}: {str(e)}")
+            continue 
 
     return None
 
