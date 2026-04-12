@@ -3,9 +3,13 @@ import 'package:http/http.dart' as http;
 import 'dart:async';
 
 class FacebookService {
+  // API Endpoint (Ensure this matches your FastAPI '/get_media' route)
   static const String _apiUrl = "https://linksyncro-api-1.onrender.com/get_media";
+  
+  // API Key (Must match the key defined in your FastAPI backend)
   static const String _apiKey = "demo_key_123"; 
 
+  // Logic to identify various Facebook URL formats (Regular, Watch, FB.com)
   bool isFacebookLink(String url) {
     String lowerUrl = url.toLowerCase();
     return lowerUrl.contains("facebook.com") || 
@@ -15,39 +19,47 @@ class FacebookService {
 
   Future<Map<String, String>> getVideoDetails(String url) async {
     try {
+      // 1. URL Cleaning: Trim whitespace to ensure valid encoding
       String targetUrl = url.trim();
 
+      // 2. API Call with API Key in Headers
       final response = await http.get(
         Uri.parse("$_apiUrl?url=${Uri.encodeComponent(targetUrl)}"),
         headers: {
           "x-api-key": _apiKey,
           "Accept": "application/json",
         },
-      ).timeout(const Duration(seconds: 45));
+      ).timeout(const Duration(seconds: 45)); // Increased timeout for server processing
 
       if (response.statusCode == 200) {
-        final data = jsonDecode(utf8.decode(response.bodyBytes));
+        final data = jsonDecode(response.body);
         
-        // আপনার পাইথন সার্ভার থেকে ডাটা আসলে তা রিটার্ন করবে
-        return {
-          'url': data['url']?.toString() ?? "",
-          'title': data['title']?.toString() ?? "FB_Video_${DateTime.now().millisecondsSinceEpoch}",
-          'thumbnail': data['thumbnail']?.toString() ?? "", 
-          'source': data['source']?.toString() ?? "Facebook",
-        };
+        if (data['status'] == 'success') {
+          return {
+            'url': data['url']?.toString() ?? "",
+            'title': data['title']?.toString() ?? "FB_Video_${DateTime.now().millisecondsSinceEpoch}",
+            'thumbnail': data['thumbnail']?.toString() ?? "", 
+            'source': data['source']?.toString() ?? "Facebook",
+          };
+        } else {
+          throw data['message'] ?? "Video details not found.";
+        }
+      } else if (response.statusCode == 401) {
+        throw "Invalid or unauthorized API Key.";
+      } else if (response.statusCode == 429) {
+        throw "Too many requests. Please try again later.";
       } else {
-        // সার্ভার থেকে আসা সঠিক এরর মেসেজটি ধরবে
-        final errorData = jsonDecode(utf8.decode(response.bodyBytes));
+        final errorData = jsonDecode(response.body);
         throw errorData['detail'] ?? "Server Error: ${response.statusCode}";
       }
     } catch (e) {
+      // User-friendly error handling
       if (e is TimeoutException) {
-        throw "সার্ভার রেসপন্স দিচ্ছে না। রেন্ডার সার্ভারটি ব্রাউজারে একবার ওপেন করুন।";
+        throw "Connection timed out. Please try again.";
       }
       
-      // গুরুত্বপূর্ণ: এই লাইনটি আপনাকে স্ক্রিনে আসল এররটি দেখাবে
-      // যেমন: '403 Forbidden' বা 'Sign in to confirm you are not a bot'
-      throw e.toString().replaceFirst("Exception: ", "");
+      // Generic error fallback
+      throw "Could not retrieve Facebook video. Please ensure the link is public.";
     }
   }
 }
