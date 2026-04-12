@@ -103,68 +103,79 @@ def extract_media(url: str):
             return data
 
     domain = urlparse(url).hostname or ""
+    # টিকটকের জন্য ডোমেইন চেক (শর্ট লিঙ্কসহ)
+    is_tiktok = any(d in domain for d in ["tiktok.com", "vt.tiktok", "vm.tiktok"])
     
     # কুকি লিস্ট (প্রথমে কুকি ছাড়া, তারপর কুকি দিয়ে চেষ্টা)
     cookie_list = [None] 
     cookie_list.extend(get_cookie_files(domain))
 
     for cookie_path in cookie_list:
-        # টিকটকের জন্য রেফারার এবং ইউজার এজেন্ট ডাইনামিক করা হয়েছে
-        is_tiktok = "tiktok" in domain
-        
         ydl_opts = {
             "format": "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best",
             "quiet": True,
             "no_warnings": True,
             "noplaylist": True,
-            "socket_timeout": 45,
-            "retries": 5,
+            "socket_timeout": 60, # টাইমআউট একটু বাড়ানো হয়েছে
+            "retries": 10,       # রিট্রাই বাড়ানো হয়েছে
             "nocheckcertificate": True,
             "geo_bypass": True,
             "user_agent": random.choice(USER_AGENTS),
             "http_headers": {
-                "Accept": "/",
-                "Accept-Language": "en-US,en;q=0.5",
-                # টিকটকের জন্য গুগল রেফারার দিলে অনেক সময় ৪MD৩ দেয়, তাই টিকটক রেফারার ব্যবহার করুন
+                "Accept": "*/*",
+                "Accept-Language": "en-US,en;q=0.9",
+                # টিকটকের জন্য প্রোপার রেফারার
                 "Referer": "https://www.tiktok.com/" if is_tiktok else "https://www.google.com/",
             },
             "extractor_args": {
-                "youtube": {"player_client": ["android", "ios", "mweb"], "player_skip": ["webpage", "configs"]},
-                "instagram": {"force_subtitles": False},
-                "facebook": {"force_generic_extractor": False},
-                "tiktok": {"app_name": "google_play", "is_test": False}
+                "youtube": {
+                    "player_client": ["android", "ios", "mweb"], 
+                    "player_skip": ["webpage", "configs"]
+                },
+                "instagram": {
+                    "player_client": ["android", "ios", "mweb"]
+                },
+                "facebook": {
+                    "player_client": ["android", "ios", "mweb"]
+                },
+                "tiktok": {
+                    "app_name": "google_play", 
+                    "is_test": False,
+                    "player_client": ["android", "ios", "mweb"]
+                }
             }
         }
 
         if cookie_path:
             ydl_opts["cookiefile"] = cookie_path
+            logging.info(f"Attempting with Cookie: {cookie_path}")
+        else:
+            logging.info(f"Attempting WITHOUT cookies for: {url}")
 
         try:
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 info = ydl.extract_info(url, download=False)
                 
-                # ডাউনলোড ইউআরএল খোঁজার উন্নত লজিক
                 download_url = None
                 
-                # অপশন ১: সরাসরি ইউআরএল চেক
+                # ১. সরাসরি URL চেক এবং ৪MD৩ ফিল্টার
                 temp_url = info.get("url")
                 if temp_url and "403" not in temp_url:
                     download_url = temp_url
 
-                # অপশন ২: যদি সরাসরি না পাওয়া যায়, তবে ফরম্যাট লিস্ট চেক
+                # ২. যদি সরাসরি না পাওয়া যায়, তবে ফরম্যাট লিস্ট চেক
                 if not download_url and "formats" in info:
-                    # ভিডিও এবং অডিও দুটোই আছে এমন mp4 ফরম্যাট খোঁজা (বিশেষ করে টিকটকের জন্য)
+                    # mp4 এবং অডিও আছে এমন ফরম্যাট খোঁজা
                     valid_formats = [
                         f for f in info["formats"] 
                         if f.get("url") and f.get("vcodec") != "none" and f.get("acodec") != "none"
                     ]
                     
                     if not valid_formats:
-                        # যদি কম্বাইন্ড ফরম্যাট না থাকে, তবে শুধু ইউআরএল আছে এমন ফরম্যাট
-                        valid_formats = [f for f in info["formats"] if f.get("url")]
+                        valid_formats = [f for f in info["formats"] if f.get("url") and "403" not in f.get("url")]
 
                     if valid_formats:
-                        # রেজোলিউশন অনুযায়ী সর্ট করা (সবচেয়ে ভালোটা আগে)
+                        # সেরা রেজোলিউশন আগে রাখা
                         valid_formats.sort(key=lambda x: (x.get("height") or 0), reverse=True)
                         download_url = valid_formats[0]["url"]
 
@@ -178,7 +189,6 @@ def extract_media(url: str):
                         "source": info.get("extractor_key", domain)
                     }
                     
-                    # ক্যাশে সেভ করা
                     cache[cache_key] = (result, time.time())
                     if len(cache) > 1000:
                         cache.pop(next(iter(cache)))
