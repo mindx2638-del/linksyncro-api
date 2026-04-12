@@ -57,6 +57,7 @@ def is_valid_url(url: str):
         return False
 
 def get_cookie_files(domain):
+    """ডোমেইন অনুযায়ী সঠিক ফোল্ডার থেকে সব .txt কুকি ফাইল রিটার্ন করবে"""
     folder_map = {
         "facebook": "facebook_cookies",
         "fb": "facebook_cookies",
@@ -85,6 +86,7 @@ def get_cookie_files(domain):
 # CORE ENGINE
 # -----------------------------
 def extract_media(url: str):
+    # ক্যাশ চেক
     cache_key = hashlib.md5(url.encode()).hexdigest()
     if cache_key in cache:
         data, ts = cache[cache_key]
@@ -93,20 +95,19 @@ def extract_media(url: str):
             return data
 
     domain = urlparse(url).hostname or ""
-    cookie_list = get_cookie_files(domain)
     
-    if not cookie_list:
-        cookie_list = [None]
+    # কুকি লিস্টের শুরুতে None রাখা হয়েছে যাতে প্রথমে কুকি ছাড়া ট্রাই করে
+    cookie_list = [None] 
+    cookie_list.extend(get_cookie_files(domain))
 
     for cookie_path in cookie_list:
         ydl_opts = {
-            # 'best' এর সাথে রেজোলিউশন লিমিট যোগ করা হয়েছে যাতে স্ট্রিমিং সহজ হয়
-            "format": "bestvideo[ext=mp4][height<=1080]+bestaudio[ext=m4a]/best[ext=mp4]/best",
+            "format": "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best",
             "quiet": True,
             "no_warnings": True,
             "noplaylist": True,
-            "socket_timeout": 60, # টাইমআউট বাড়ানো হয়েছে
-            "retries": 10,
+            "socket_timeout": 45,
+            "retries": 5,
             "nocheckcertificate": True,
             "geo_bypass": True,
             "user_agent": random.choice(USER_AGENTS),
@@ -118,35 +119,29 @@ def extract_media(url: str):
             "extractor_args": {
                 "youtube": {"player_client": ["android", "ios", "mweb"], "player_skip": ["webpage", "configs"]},
                 "instagram": {"force_subtitles": False},
-                # ফেসবুকের জন্য বিশেষ আর্গুমেন্ট
                 "facebook": {"force_generic_extractor": False}
             }
         }
 
         if cookie_path:
             ydl_opts["cookiefile"] = cookie_path
+            logging.info(f"Attempting with Cookie: {cookie_path}")
+        else:
+            logging.info(f"Attempting WITHOUT cookies for: {url}")
 
         try:
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                # সরাসরি extract_info কল করা
                 info = ydl.extract_info(url, download=False)
                 
-                # ফেসবুক ও অন্যান্য সাইটের জন্য সঠিক URL খুঁজে বের করা
-                download_url = None
+                download_url = info.get("url")
                 
-                # ১. সরাসরি URL চেক
-                if info.get("url"):
-                    download_url = info["url"]
-                
-                # ২. ফরম্যাট লিস্ট চেক (যদি সরাসরি URL না থাকে)
+                # যদি সরাসরি URL না থাকে, ফরম্যাট লিস্ট চেক করা (আপনার অরিজিনাল লজিক)
                 if not download_url and "formats" in info:
-                    # শুধু সেই ফরম্যাট নিবে যেগুলোতে অডিও এবং ভিডিও দুটোই আছে (MP4)
                     valid_formats = [f for f in info["formats"] if f.get("vcodec") != "none" and f.get("acodec") != "none"]
                     if not valid_formats:
                         valid_formats = [f for f in info["formats"] if f.get("url")]
                     
                     if valid_formats:
-                        # সবচেয়ে ভালো রেজোলিউশন সিলেক্ট করা
                         valid_formats.sort(key=lambda x: (x.get("height") or 0), reverse=True)
                         download_url = valid_formats[0]["url"]
 
@@ -164,25 +159,28 @@ def extract_media(url: str):
                     if len(cache) > 1000:
                         cache.pop(next(iter(cache)))
                     
-                    logging.info(f"Success with cookie: {cookie_path}")
                     return result
                     
         except Exception as e:
-            logging.error(f"Failed with {cookie_path}: {str(e)}")
-            # ৪১৬ বা পারমিশন এরর হলে পরের কুকি ট্রাই করবে
-            continue
+            if not cookie_path:
+                logging.warning(f"Failed without cookies. Error: {str(e)}. Now trying with available cookies...")
+            else:
+                logging.error(f"Failed with cookie {cookie_path}: {str(e)}")
+            continue # বর্তমান অপশন কাজ না করলে লুপের পরের কুকি ট্রাই করবে
 
     return None
 
 # -----------------------------
-# ROUTES (আপনার অরিজিনাল লজিক)
+# ROUTES
 # -----------------------------
 @app.get("/get_media")
 async def get_media(url: str, request: Request):
+    # API Key Check
     key = request.headers.get("x-api-key")
     if not key or key not in VALID_API_KEYS:
         raise HTTPException(status_code=401, detail="Unauthorized: Invalid API Key")
 
+    # Rate Limit Check
     now = time.time()
     user_rates = rate_store.get(key, [])
     user_rates = [t for t in user_rates if now - t < RATE_WINDOW]
@@ -194,7 +192,7 @@ async def get_media(url: str, request: Request):
     if not url:
         raise HTTPException(status_code=400, detail="URL is required")
 
-    # ফেসবুক ট্র্যাকিং প্যারামিটার রিমুভ করা
+    # URL ক্লিনিং
     if "?" in url and ("facebook" in url or "fb" in url or "instagram" in url):
         url = url.split("?")[0]
 
@@ -205,7 +203,7 @@ async def get_media(url: str, request: Request):
         loop = asyncio.get_event_loop()
         result = await loop.run_in_executor(executor, extract_media, url)
         if not result:
-            raise HTTPException(status_code=404, detail="Extraction failed. All cookies expired or IP blocked.")
+            raise HTTPException(status_code=404, detail="Could not extract video. Content may be private or IP blocked.")
         return result
     except HTTPException as he:
         raise he
@@ -213,6 +211,9 @@ async def get_media(url: str, request: Request):
         logging.error(f"Critical Error: {str(e)}")
         raise HTTPException(status_code=500, detail="Internal server error")
 
+# -----------------------------
+# RUNNER
+# -----------------------------
 if __name__ == "__main__":
     import uvicorn
     port = int(os.environ.get("PORT", 8000))
