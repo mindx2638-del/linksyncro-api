@@ -66,7 +66,8 @@ def get_cookie_files(domain):
         "fb": "facebook_cookies",
         "youtube": "youtube_cookies",
         "youtu.be": "youtube_cookies",
-        "instagram": "instagram_cookies"
+        "instagram": "instagram_cookies",
+        "tiktok": "tiktok_cookies"
     }
     
     target_folder = ""
@@ -97,15 +98,12 @@ def extract_media(url: str):
             logging.info(f"Cache Hit: {url}")
             return data
 
-    # ১. লিঙ্ক ক্লিনিং (TikTok এবং অন্যান্য সাইটের ট্র্যাকিং আইডি বাদ দেওয়া)
-    if any(x in url for x in ["tiktok.com", "facebook.com", "instagram.com"]):
+    # ১. টিকটক লিঙ্কের জন্য বিশেষ ক্লিনিং (ট্র্যাকিং আইডি রিমুভ)
+    if "tiktok.com" in url:
         url = url.split("?")[0]
 
     domain = urlparse(url).hostname or ""
-    
-    # ২. কুকি লিস্ট ম্যাপ করা (TikTok কুকি ফোল্ডার থাকলে তা চেক করবে)
-    cookie_list = [None] 
-    cookie_list.extend(get_cookie_files(domain))
+    cookie_list = [None] + get_cookie_files(domain)
 
     for cookie_path in cookie_list:
         ydl_opts = {
@@ -113,28 +111,26 @@ def extract_media(url: str):
             "quiet": True,
             "no_warnings": True,
             "noplaylist": True,
-            "socket_timeout": 20, # ১৫-২০ সেকেন্ডের বেশি অপেক্ষা করা মানে লিঙ্ক স্লো
-            "retries": 5, 
+            "socket_timeout": 45, # আপনার পছন্দের ৪৫ সেকেন্ড
+            "retries": 10,
             "nocheckcertificate": True,
             "geo_bypass": True,
             "user_agent": random.choice(USER_AGENTS),
-            "ignoreerrors": True, # এরর থাকলেও চেষ্টা চালিয়ে যাবে
             
-            # ৩. ডাউনলোড স্পিড এবং কানেকশন অপ্টিমাইজেশন
-            "concurrent_fragment_downloads": 10,
+            # আপনার GAS Proxy থাকলে এখানে যোগ করতে পারেন (ঐচ্ছিক)
+            # "proxy": "YOUR_GAS_PROXY_URL", 
+
             "http_headers": {
-                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+                "Accept": "/",
                 "Accept-Language": "en-US,en;q=0.5",
-                # ৪. TikTok এর জন্য সঠিক রেফারার সেট করা
+                # ২. রেফারার লজিক ঠিক করা হয়েছে
                 "Referer": "https://www.tiktok.com/" if "tiktok" in url else "https://www.google.com/",
             },
-            
             "extractor_args": {
                 "youtube": {"player_client": ["android", "ios", "mweb", "tv"], "player_skip": ["webpage", "configs"]},
+                "tiktok": {"app_version": "20.2.1"}, # টিকটক সিকিউরিটি বাইপাস
                 "instagram": {"force_subtitles": False},
-                "facebook": {"force_generic_extractor": False},
-                # ৫. TikTok এর জন্য স্পেশাল আর্গুমেন্ট
-                "tiktok": {"app_version": "20.2.1"}
+                "facebook": {"force_generic_extractor": False}
             }
         }
 
@@ -143,19 +139,19 @@ def extract_media(url: str):
 
         try:
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                # ৬. প্রসেসিং লজিক (সরাসরি ভিডিও লিঙ্ক খোঁজা)
+                # ৩. process=True যোগ করা হয়েছে
                 info = ydl.extract_info(url, download=False, process=True)
                 
                 if not info:
                     continue
 
-                # যদি এটি একটি প্লেলিস্ট বা এন্ট্রি হয় (TikTok প্রায়ই এভাবে ডাটা দেয়)
+                # ৪. এন্ট্রি বা লিস্ট থাকলে প্রথমটি নেওয়া হবে
                 if 'entries' in info:
                     info = info['entries'][0]
                 
                 download_url = info.get("url")
                 
-                # আপনার অরিজিনাল ফরম্যাট সিলেকশন লজিক (অপরিবর্তিত)
+                # ফরম্যাট সিলেকশন লজিক (অপরিবর্তিত)
                 if not download_url and "formats" in info:
                     valid_formats = [f for f in info["formats"] if f.get("vcodec") != "none" and f.get("acodec") != "none"]
                     if not valid_formats:
@@ -182,7 +178,7 @@ def extract_media(url: str):
                     return result
                     
         except Exception as e:
-            logging.error(f"Error for {url}: {str(e)}")
+            logging.error(f"Error: {str(e)}")
             continue 
 
     return None
