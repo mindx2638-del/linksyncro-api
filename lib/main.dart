@@ -145,32 +145,28 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   void _addNewDownload() async {
-  final input = _urlController.text.trim();
-  if (input.isEmpty) return _showToast("Please paste a link first", isError: true);
-  if (!await _handlePermissions()) return _showToast("Storage permission denied!", isError: true);
-
-  _showToast("Analyzing link...");
-
-  try {
-    final result = await _resolveLink(input);
-
-    if (result != null && result['status'] == 'success') {
-      // কোয়ালিটি শিট দেখানো
-      _showQualitySheet(
-        result['title'] ?? "Video", 
-        result['thumbnail'] ?? "", 
-        result['formats'] ?? []
-      );
-      // কোয়ালিটি শিট ওপেন হওয়ার পর ক্লিয়ার করুন
-      _urlController.clear();
-    } else {
-      _showToast("Could not fetch video details", isError: true);
+    final input = _urlController.text.trim();
+    if (input.isEmpty) {
+      _showToast("Please paste a link first", isError: true);
+      return;
     }
-  } catch (e) {
-    _showToast("Error: $e", isError: true);
-  }
-}
+    if (!await _handlePermissions()) {
+      _showToast("Storage permission denied!", isError: true);
+      return;
+    }
 
+    final task = DownloadTask(
+      id: DateTime.now().millisecondsSinceEpoch.toString(),
+      inputUrl: input,
+    );
+
+    setState(() {
+      _downloadTasks.insert(0, task);
+      _urlController.clear();
+    });
+
+    _startDownloadProcess(task);
+  }
 
   Future<void> _startDownloadProcess(DownloadTask task) async {
     try {
@@ -202,38 +198,18 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<Map<String, dynamic>> _resolveLink(String input) async {
-    // সরাসরি আপনার রেন্ডার সার্ভার লিঙ্কটি ব্যবহার করছি
-    const String proxyUrl = "https://linksyncro-api-1.onrender.com/get_media";
+    if (_ytService.isYouTubeLink(input)) return await _ytService.getVideoDetails(input);
+    if (_fbService.isFacebookLink(input)) return await _fbService.getVideoDetails(input);
+    if (_igService.isInstagramLink(input)) return await _igService.getVideoDetails(input);
 
-    try {
-      // লিঙ্কটি এনকোড করে ইউআরএল তৈরি
-      final uri = Uri.parse("$proxyUrl?url=${Uri.encodeComponent(input)}");
+    const String proxyUrl = "https://script.google.com/macros/s/AKfycbxsns846mdhcNrberwkvdB12yJ58pVg3yE6b4tbvp6rOWPxdjYvN7xeEDbIfID0_CrqJg/exec";
+    final uri = Uri.parse("$proxyUrl?url=${Uri.encodeComponent(input)}");
 
-      // রেন্ডার সার্ভারে রিকোয়েস্ট পাঠানো
-      final response = await http.get(
-        uri,
-        headers: {
-          "x-api-key": "demo_key_123", // আপনার পাইথন কোডের VALID_API_KEYS এর সাথে মিলিয়ে নিন
-          "Accept": "application/json",
-        },
-      ).timeout(const Duration(seconds: 45));
-
-      if (response.statusCode == 200) {
-        // সফলভাবে ডাটা পেলে তা রিটার্ন করবে
-        return jsonDecode(utf8.decode(response.bodyBytes));
-      } else {
-        throw "Server Error: ${response.statusCode}";
-      }
-    } catch (e) {
-      // রেন্ডার সার্ভার ঘুমিয়ে থাকলে বা এরর দিলে ব্যাকআপ হিসেবে লোকাল সার্ভিস ব্যবহার করবে
-      debugPrint("Render failed, trying local services: $e");
-      
-      if (_ytService.isYouTubeLink(input)) return await _ytService.getVideoDetails(input);
-      if (_fbService.isFacebookLink(input)) return await _fbService.getVideoDetails(input);
-      if (_igService.isInstagramLink(input)) return await _igService.getVideoDetails(input);
-      
-      throw "Could not resolve link from any source.";
+    final response = await http.get(uri).timeout(const Duration(seconds: 45));
+    if (response.statusCode == 200) {
+      return jsonDecode(utf8.decode(response.bodyBytes));
     }
+    throw "Proxy server failed to respond";
   }
 
   Future<void> _executeDownload(DownloadTask task) async {
@@ -348,100 +324,6 @@ class _HomeScreenState extends State<HomeScreen> {
       ),
     );
   }
-
-  void _showQualitySheet(String title, String thumb, List formats) {
-  final bool isDark = Theme.of(context).brightness == Brightness.dark;
-
-  showModalBottomSheet(
-    context: context,
-    isScrollControlled: true,
-    backgroundColor: isDark ? const Color(0xFF1C1F2E) : Colors.white,
-    shape: const RoundedRectangleBorder(
-      borderRadius: BorderRadius.vertical(top: Radius.circular(25)),
-    ),
-    builder: (context) => Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 20),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Container(
-            width: 40,
-            height: 4,
-            decoration: BoxDecoration(
-              color: Colors.grey[400],
-              borderRadius: BorderRadius.circular(10),
-            ),
-          ),
-          const SizedBox(height: 20),
-          const Text(
-            "Select Video Quality",
-            style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-          ),
-          const SizedBox(height: 20),
-          // কোয়ালিটি লিস্ট
-          Flexible(
-            child: ListView.builder(
-              shrinkWrap: true,
-              itemCount: formats.length,
-              itemBuilder: (context, index) {
-                final f = formats[index];
-                return ListTile(
-                  contentPadding: const EdgeInsets.symmetric(vertical: 5),
-                  leading: const CircleAvatar(
-                    backgroundColor: Colors.indigo,
-                    child: Icon(Icons.hd_rounded, color: Colors.white, size: 20),
-                  ),
-                  title: Text(
-                    "${f['quality']} (${f['ext'].toString().toUpperCase()})",
-                    style: const TextStyle(fontWeight: FontWeight.bold),
-                  ),
-                  subtitle: Text("Estimated Size: ${f['size']}"),
-                  trailing: const Icon(Icons.download_for_offline_rounded, color: Colors.indigo),
-                  onTap: () {
-                    Navigator.pop(context);
-                    // ইউজার যেটা সিলেক্ট করল সেটা দিয়ে টাস্ক তৈরি করা
-                    _startSelectedDownload(title, f['url'], thumb, f['quality']);
-                  },
-                );
-              },
-            ),
-          ),
-          const SizedBox(height: 10),
-        ],
-      ),
-    ),
-  );
-}
-
-void _startSelectedDownload(String title, String url, String thumb, String quality) async {
-  final task = DownloadTask(
-    id: DateTime.now().millisecondsSinceEpoch.toString(),
-    inputUrl: url, // সরাসরি ডাউনলোড লিঙ্ক ব্যবহার
-  );
-
-  task.videoTitle = "$title ($quality)";
-  task.downloadUrl = url;
-  task.thumbnailUrl = thumb;
-  task.statusText = "Downloading...";
-
-  setState(() {
-    _downloadTasks.insert(0, task);
-  });
-
-  // স্টোরেজ পাথ ঠিক করা
-  const root = "/storage/emulated/0";
-  final folder = Directory("$root/Download/LinkSyncro");
-  if (!await folder.exists()) await folder.create(recursive: true);
-
-  String cleanName = task.videoTitle!.replaceAll(RegExp(r'[<>:"/\\|?*]'), '').trim();
-  if (cleanName.length > 50) cleanName = cleanName.substring(0, 50).trim();
-
-  task.savePath = "${folder.path}/$cleanName.mp4";
-
-  // ডাউনলোড শুরু
-  _executeDownload(task);
-}
-
 
  @override
 Widget build(BuildContext context) {
