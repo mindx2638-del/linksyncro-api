@@ -228,7 +228,7 @@ class _HomeScreenState extends State<HomeScreen> {
   if (_tiktokService.isTikTokLink(input)) return await _tiktokService.getVideoDetails(input);
 
   // ২. আপনার পাইথন এপিআই ইউআরএল (Render/Heroku থেকে পাওয়া)
-  const String pythonApiUrl = "https://your-api-name.onrender.com/get_media";
+  const String pythonApiUrl = "https://linksyncro-api-1.onrender.com/get_media"; 
   
   try {
     final uri = Uri.parse("$pythonApiUrl?url=${Uri.encodeComponent(input)}");
@@ -265,74 +265,101 @@ class _HomeScreenState extends State<HomeScreen> {
 }
 
   Future<void> _executeDownload(DownloadTask task) async {
-    RandomAccessFile? raf;
-    try {
-      File file = File(task.savePath!);
-      int downloadedBytes = 0;
-      if (await file.exists()) {
-        downloadedBytes = await file.length();
-      }
-
-      setState(() {
-        task.isProcessing = true;
-        task.isFinished = false;
-        task.statusText = task.isPaused ? "Paused" : "Downloading...";
-      });
-
-      task.cancelToken = CancelToken();
-
-      // এখানে টিকটক ফিক্সের জন্য Headers আপডেট করা হয়েছে
-      Response response = await _dio.get(
-        task.downloadUrl!,
-        onReceiveProgress: (received, total) {
-          if (total != -1) {
-            setState(() {
-              task.progress = (received + downloadedBytes) / (total + downloadedBytes);
-            });
-          }
-        },
-        options: Options(
-          responseType: ResponseType.stream,
-          headers: {
-            "range": "bytes=$downloadedBytes-",
-            // নিচের এই ২টি লাইন টিকটক ডাউনলোডের জন্য সবচেয়ে জরুরি
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
-            "Referer": "https://www.tiktok.com/",
-          },
-        ),
-        cancelToken: task.cancelToken,
-      );
-
-      if (response.statusCode == 416) {
-        if (await file.exists()) await file.delete();
-        setState(() => task.progress = 0);
-        await _executeDownload(task);
-        return;
-      }
-
-      raf = await file.open(mode: FileMode.append);
-      Stream<Uint8List> stream = response.data.stream;
-      await for (var chunk in stream) {
-        if (task.isPaused) break;
-        await raf.writeFrom(chunk);
-      }
-      await raf.close();
-
-      if (!task.isPaused) {
-        await MediaScanner.loadMedia(path: task.savePath!);
-        setState(() {
-          task.isProcessing = false;
-          task.isFinished = true;
-          task.progress = 1.0;
-          task.statusText = "Saved to Gallery";
-        });
-      }
-    } catch (e) {
-      if (raf != null) await raf.close();
-      if (e is DioException && CancelToken.isCancel(e)) return;
-      _handleTaskError(task, e);
+  RandomAccessFile? raf;
+  try {
+    final File file = File(task.savePath!);
+    int downloadedBytes = 0;
+    
+    // ফাইল আগে থেকে থাকলে তার সাইজ চেক করা (Resume করার জন্য)
+    if (await file.exists()) {
+      downloadedBytes = await file.length();
     }
+
+    setState(() {
+      task.isProcessing = true;
+      task.isFinished = false;
+      task.statusText = task.isPaused ? "Paused" : "Downloading...";
+    });
+
+    task.cancelToken = CancelToken();
+
+    // Dio রিকোয়েস্ট অপ্টিমাইজেশন
+    final response = await _dio.get(
+      task.downloadUrl!,
+      onReceiveProgress: (received, total) {
+        if (total != -1) {
+          setState(() {
+            // টোটাল সাইজ = বর্তমানে যা আসছে + আগে যা ডাউনলোড হয়েছিল
+            task.progress = (received + downloadedBytes) / (total + downloadedBytes);
+          });
+        }
+      },
+      options: Options(
+        responseType: ResponseType.stream,
+        followRedirects: true,
+        validateStatus: (status) => status != null && status < 500,
+        headers: {
+          "range": "bytes=$downloadedBytes-",
+          // লেটেস্ট মোবাইল ইউজার এজেন্ট (টিকটক ফিক্সের জন্য সেরা)
+          "User-Agent": "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36",
+          "Referer": "https://www.tiktok.com/",
+          "Accept": "/",
+          "Connection": "keep-alive",
+        },
+      ),
+      cancelToken: task.cancelToken,
+    );
+
+    // ৪১৬ এরর মানে রেঞ্জ রিজেক্ট করেছে (হয়তো ফাইল অলরেডি ডাউনলোড শেষ)
+    if (response.statusCode == 416) {
+      if (await file.exists()) {
+        // যদি ফাইলটি পূর্ণাঙ্গ না হয় তবে ডিলিট করে নতুন করে শুরু করবে
+        await file.delete();
+        setState(() => task.progress = 0);
+        return _executeDownload(task);
+      }
+    }
+
+    // ফাইল রাইটিং শুরু
+    raf = await file.open(mode: FileMode.append);
+    final Stream<Uint8List> stream = response.data.stream;
+
+    await for (final List<int> chunk in stream) {
+      // যদি ইউজার পজ বা ক্যানসেল করে তবে রাইটিং থামিয়ে দেবে
+      if (task.isPaused || task.cancelToken.isCancelled) {
+        break;
+      }
+      await raf.writeFrom(chunk);
+    }
+
+    await raf.close();
+    raf = null; // মেমোরি ক্লিয়ার
+
+    // ডাউনলোড সাকসেসফুল হলে গ্যালারিতে পাঠানো
+    if (!task.isPaused && !task.cancelToken.isCancelled) {
+      await MediaScanner.loadMedia(path: task.savePath!);
+      setState(() {
+        task.isProcessing = false;
+        task.isFinished = true;
+        task.progress = 1.0;
+        task.statusText = "Saved to Gallery";
+      });
+    }
+  } catch (e) {
+    if (raf != null) await raf.close();
+    
+    // যদি ইউজার নিজে ক্যানসেল করে তবে এরর দেখাবে না
+    if (e is DioException && CancelToken.isCancel(e)) {
+      return;
+    }
+    
+    _handleTaskError(task, e);
+  } finally {
+    // নিশ্চিত করা যে ফাইল স্ট্রিম বন্ধ হয়েছে
+    if (raf != null) await raf.close();
   }
+}
+
 
 
   void _togglePauseResume(DownloadTask task) {
