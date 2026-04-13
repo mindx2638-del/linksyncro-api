@@ -185,14 +185,27 @@ class _HomeScreenState extends State<HomeScreen> {
       final folder = Directory("$root/Download/LinkSyncro");
       if (!await folder.exists()) await folder.create(recursive: true);
 
-      // ফাইল নেম ক্লিনিং এবং লেন্থ লিমিট (Error 36 Fix)
-      String cleanName = task.videoTitle!.replaceAll(RegExp(r'[<>:"/\\|?*]'), '').trim();
-      if (cleanName.length > 50) {
-        cleanName = cleanName.substring(0, 50).trim();
+      // --- ফাইল নেম ক্লিনিং ফিক্স শুরু ---
+      // ১. অবৈধ ক্যারেক্টার সরানো
+      String cleanName = task.videoTitle!
+          .replaceAll(RegExp(r'[<>:"/\\|?*]'), '') // প্যাথের জন্য নিষিদ্ধ চিহ্ন বাদ
+          .replaceAll(RegExp(r'[^\x00-\x7F]+'), '') // ইমোজি বা হিজিবিজি অক্ষর বাদ দেওয়া
+          .trim();
+
+      // ২. নাম যদি একদম খালি হয়ে যায় (সব ইমোজি থাকলে) তবে একটি ডিফল্ট নাম দেওয়া
+      if (cleanName.isEmpty) {
+        cleanName = "Video_${task.id}";
       }
-      if (cleanName.isEmpty) cleanName = "Video_${task.id}";
+
+      // ৩. নাম খুব বেশি লম্বা হলে কেটে ছোট করা (অ্যান্ড্রয়েড লিমিট ফিক্স)
+      if (cleanName.length > 60) {
+        cleanName = cleanName.substring(0, 60).trim();
+      }
+      // --- ফাইল নেম ক্লিনিং ফিক্স শেষ ---
 
       task.savePath = "${folder.path}/$cleanName.mp4";
+      
+      // ডাউনলোড শুরু করা
       await _executeDownload(task);
     } catch (e) {
       _handleTaskError(task, e);
@@ -200,6 +213,14 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<Map<String, dynamic>> _resolveLink(String input) async {
+
+      if (input.contains("?")) {
+      if (input.contains("tiktok.com") || 
+          input.contains("instagram.com") || 
+          input.contains("fb.watch")) {
+         input = input.split("?")[0];
+      }
+    }
   // ১. নির্দিষ্ট সার্ভিসগুলো চেক করা
   if (_ytService.isYouTubeLink(input)) return await _ytService.getVideoDetails(input);
   if (_fbService.isFacebookLink(input)) return await _fbService.getVideoDetails(input);
@@ -229,7 +250,7 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   } catch (e) {
     // যদি আপনার পাইথন এপিআই কাজ না করে, তবে ব্যাকআপ হিসেবে গুগল স্ক্রিপ্ট রাখতে পারেন
-    logging.error("Python API failed, trying backup...");
+    debugPrint("Python API failed, trying backup...");
     
     // ব্যাকআপ হিসেবে আপনার আগের গুগল স্ক্রিপ্ট (ঐচ্ছিক)
     const String backupUrl = "https://script.google.com/macros/s/AKfycbxsns846mdhcNrberwkvdB12yJ58pVg3yE6b4tbvp6rOWPxdjYvN7xeEDbIfID0_CrqJg/exec";
@@ -260,6 +281,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
       task.cancelToken = CancelToken();
 
+      // এখানে টিকটক ফিক্সের জন্য Headers আপডেট করা হয়েছে
       Response response = await _dio.get(
         task.downloadUrl!,
         onReceiveProgress: (received, total) {
@@ -271,7 +293,12 @@ class _HomeScreenState extends State<HomeScreen> {
         },
         options: Options(
           responseType: ResponseType.stream,
-          headers: {"range": "bytes=$downloadedBytes-"},
+          headers: {
+            "range": "bytes=$downloadedBytes-",
+            // নিচের এই ২টি লাইন টিকটক ডাউনলোডের জন্য সবচেয়ে জরুরি
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
+            "Referer": "https://www.tiktok.com/",
+          },
         ),
         cancelToken: task.cancelToken,
       );
@@ -306,6 +333,7 @@ class _HomeScreenState extends State<HomeScreen> {
       _handleTaskError(task, e);
     }
   }
+
 
   void _togglePauseResume(DownloadTask task) {
     if (task.isPaused) {
@@ -630,5 +658,13 @@ Widget build(BuildContext context) {
       ),
     );
   }
-}/ /   u p d a t e   t e s t  
- 
+
+  @override
+  void dispose() {
+    _urlController.dispose();
+    for (var task in _downloadTasks) {
+      task.cancelToken.cancel("Cleanup");
+    }
+    super.dispose();
+  }
+}
