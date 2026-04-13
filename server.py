@@ -89,7 +89,7 @@ def get_cookie_files(domain):
 # CORE ENGINE
 # -----------------------------
 def extract_media(url: str):
-    # আপনার অরিজিনাল ক্যাশ চেক লজিক
+    # ক্যাশ চেক লজিক (অপরিবর্তিত)
     cache_key = hashlib.md5(url.encode()).hexdigest()
     if cache_key in cache:
         data, ts = cache[cache_key]
@@ -97,49 +97,65 @@ def extract_media(url: str):
             logging.info(f"Cache Hit: {url}")
             return data
 
+    # ১. লিঙ্ক ক্লিনিং (TikTok এবং অন্যান্য সাইটের ট্র্যাকিং আইডি বাদ দেওয়া)
+    if any(x in url for x in ["tiktok.com", "facebook.com", "instagram.com"]):
+        url = url.split("?")[0]
+
     domain = urlparse(url).hostname or ""
     
+    # ২. কুকি লিস্ট ম্যাপ করা (TikTok কুকি ফোল্ডার থাকলে তা চেক করবে)
     cookie_list = [None] 
     cookie_list.extend(get_cookie_files(domain))
 
     for cookie_path in cookie_list:
         ydl_opts = {
-            # ফরমেট লজিক আপনার দেওয়াটাই রাখা হয়েছে (MP4 priority)
             "format": "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best",
             "quiet": True,
             "no_warnings": True,
             "noplaylist": True,
-            "socket_timeout": 45,
-            "retries": 10, # আরও স্টেবল করার জন্য বাড়ানো হয়েছে
+            "socket_timeout": 20, # ১৫-২০ সেকেন্ডের বেশি অপেক্ষা করা মানে লিঙ্ক স্লো
+            "retries": 5, 
             "nocheckcertificate": True,
             "geo_bypass": True,
             "user_agent": random.choice(USER_AGENTS),
+            "ignoreerrors": True, # এরর থাকলেও চেষ্টা চালিয়ে যাবে
+            
+            # ৩. ডাউনলোড স্পিড এবং কানেকশন অপ্টিমাইজেশন
+            "concurrent_fragment_downloads": 10,
             "http_headers": {
                 "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
                 "Accept-Language": "en-US,en;q=0.5",
-                "Referer": "https://www.google.com/",
+                # ৪. TikTok এর জন্য সঠিক রেফারার সেট করা
+                "Referer": "https://www.tiktok.com/" if "tiktok" in url else "https://www.google.com/",
             },
+            
             "extractor_args": {
-                # এখানে Android এবং iOS ক্লায়েন্ট যোগ করা হয়েছে যাতে মোবাইলে লিঙ্ক প্লে হয়
                 "youtube": {"player_client": ["android", "ios", "mweb", "tv"], "player_skip": ["webpage", "configs"]},
                 "instagram": {"force_subtitles": False},
-                "facebook": {"force_generic_extractor": False}
+                "facebook": {"force_generic_extractor": False},
+                # ৫. TikTok এর জন্য স্পেশাল আর্গুমেন্ট
+                "tiktok": {"app_version": "20.2.1"}
             }
         }
 
         if cookie_path:
             ydl_opts["cookiefile"] = cookie_path
-            logging.info(f"Attempting with Cookie: {cookie_path}")
-        else:
-            logging.info(f"Attempting WITHOUT cookies for: {url}")
 
         try:
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                info = ydl.extract_info(url, download=False)
+                # ৬. প্রসেসিং লজিক (সরাসরি ভিডিও লিঙ্ক খোঁজা)
+                info = ydl.extract_info(url, download=False, process=True)
+                
+                if not info:
+                    continue
+
+                # যদি এটি একটি প্লেলিস্ট বা এন্ট্রি হয় (TikTok প্রায়ই এভাবে ডাটা দেয়)
+                if 'entries' in info:
+                    info = info['entries'][0]
                 
                 download_url = info.get("url")
                 
-                # আপনার অরিজিনাল ফরম্যাট সিলেকশন লজিক (পুরোটা একই রাখা হয়েছে)
+                # আপনার অরিজিনাল ফরম্যাট সিলেকশন লজিক (অপরিবর্তিত)
                 if not download_url and "formats" in info:
                     valid_formats = [f for f in info["formats"] if f.get("vcodec") != "none" and f.get("acodec") != "none"]
                     if not valid_formats:
@@ -160,16 +176,13 @@ def extract_media(url: str):
                     }
                     
                     cache[cache_key] = (result, time.time())
-                    if len(cache) > 2000: # ক্যাশ লিমিট কিছুটা বাড়ানো হয়েছে
+                    if len(cache) > 2000:
                         cache.pop(next(iter(cache)))
                     
                     return result
                     
         except Exception as e:
-            if not cookie_path:
-                logging.warning(f"Failed without cookies. Error: {str(e)}")
-            else:
-                logging.error(f"Failed with cookie {cookie_path}: {str(e)}")
+            logging.error(f"Error for {url}: {str(e)}")
             continue 
 
     return None
