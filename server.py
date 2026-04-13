@@ -13,7 +13,7 @@ from concurrent.futures import ThreadPoolExecutor
 # -----------------------------
 # APP INITIALIZATION
 # -----------------------------
-app = FastAPI(title="LinkSyncro Universal API", version="3.0")
+app = FastAPI(title="LinkSyncro Universal API", version="4.0")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -23,7 +23,7 @@ app.add_middleware(
 )
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
-executor = ThreadPoolExecutor(max_workers=50) # থ্রেড পুল কিছুটা বাড়ানো হয়েছে পারফরম্যান্সের জন্য
+executor = ThreadPoolExecutor(max_workers=50)
 
 # -----------------------------
 # CACHE & SETTINGS
@@ -35,38 +35,33 @@ RATE_LIMIT = 50
 RATE_WINDOW = 60
 VALID_API_KEYS = {"demo_key_123", "premium_key_456"}
 
-# Android এবং iOS সাপোর্ট নিশ্চিত করতে আধুনিক মোবাইল ইউজার এজেন্ট
 USER_AGENTS = [
     "Mozilla/5.0 (iPhone; CPU iPhone OS 17_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Mobile/15E148 Safari/604.1",
     "Mozilla/5.0 (Linux; Android 14; Pixel 😎 AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Mobile Safari/537.36",
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36"
 ]
 
 # -----------------------------
 # HELPERS
 # -----------------------------
 def is_valid_url(url: str):
-    """আপনার অরিজিনাল লজিক ঠিক রেখে বিশ্বের সব লিঙ্ক সাপোর্টের জন্য আপডেট"""
     try:
         parsed = urlparse(url)
-        if parsed.scheme not in ["http", "https"] or not parsed.hostname:
-            return False
-        
-        # 'allowed' লিস্টের বাধ্যবাধকতা সরিয়ে দেওয়া হয়েছে যাতে সব সাইট কাজ করে
-        # তবে আপনার আগের চেনা সাইটগুলোও এর অন্তর্ভুক্ত থাকবে
-        return True 
+        return bool(parsed.scheme in ["http", "https"] and parsed.hostname)
     except:
         return False
 
 def get_cookie_files(domain):
-    """আপনার দেওয়া ডোমেইন ভিত্তিক কুকি লজিক (অপরিবর্তিত)"""
     folder_map = {
         "facebook": "facebook_cookies",
         "fb": "facebook_cookies",
         "youtube": "youtube_cookies",
         "youtu.be": "youtube_cookies",
-        "instagram": "instagram_cookies"
+        "instagram": "instagram_cookies",
+        "tiktok": "tiktok_cookies",
+        "twitter": "twitter_cookies",
+        "x.com": "twitter_cookies"
     }
     
     target_folder = ""
@@ -89,7 +84,6 @@ def get_cookie_files(domain):
 # CORE ENGINE
 # -----------------------------
 def extract_media(url: str):
-    # আপনার অরিজিনাল ক্যাশ চেক লজিক
     cache_key = hashlib.md5(url.encode()).hexdigest()
     if cache_key in cache:
         data, ts = cache[cache_key]
@@ -98,29 +92,34 @@ def extract_media(url: str):
             return data
 
     domain = urlparse(url).hostname or ""
-    
-    cookie_list = [None] 
-    cookie_list.extend(get_cookie_files(domain))
+    cookie_list = [None] + get_cookie_files(domain)
 
     for cookie_path in cookie_list:
         ydl_opts = {
-            # ফরমেট লজিক আপনার দেওয়াটাই রাখা হয়েছে (MP4 priority)
+            # আপনার অরিজিনাল মোবাইল ফ্রেন্ডলি ফরম্যাট লজিক
             "format": "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best",
             "quiet": True,
             "no_warnings": True,
             "noplaylist": True,
-            "socket_timeout": 45,
-            "retries": 10, # আরও স্টেবল করার জন্য বাড়ানো হয়েছে
+            "socket_timeout": 60,
+            "retries": 10,
             "nocheckcertificate": True,
             "geo_bypass": True,
             "user_agent": random.choice(USER_AGENTS),
+            
+            # --- Universal Support এর জন্য নতুন লজিক ---
+            "ignoreerrors": True,
+            "allow_unplayable_formats": True,
+            "referer": url,  # অনেক সাইট রেফারার ছাড়া ভিডিও দেয় না
             "http_headers": {
                 "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
                 "Accept-Language": "en-US,en;q=0.5",
-                "Referer": "https://www.google.com/",
+                "DNT": "1",
+                "Upgrade-Insecure-Requests": "1",
             },
+            # ------------------------------------------
+
             "extractor_args": {
-                # এখানে Android এবং iOS ক্লায়েন্ট যোগ করা হয়েছে যাতে মোবাইলে লিঙ্ক প্লে হয়
                 "youtube": {"player_client": ["android", "ios", "mweb", "tv"], "player_skip": ["webpage", "configs"]},
                 "instagram": {"force_subtitles": False},
                 "facebook": {"force_generic_extractor": False}
@@ -129,17 +128,20 @@ def extract_media(url: str):
 
         if cookie_path:
             ydl_opts["cookiefile"] = cookie_path
-            logging.info(f"Attempting with Cookie: {cookie_path}")
-        else:
-            logging.info(f"Attempting WITHOUT cookies for: {url}")
 
         try:
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 info = ydl.extract_info(url, download=False)
+                if not info:
+                    continue
+
+                # যদি লিস্ট আসে (যেমন কিছু এমবেড লিঙ্ক), প্রথম এন্ট্রি নেওয়া
+                if 'entries' in info:
+                    info = info['entries'][0]
                 
                 download_url = info.get("url")
                 
-                # আপনার অরিজিনাল ফরম্যাট সিলেকশন লজিক (পুরোটা একই রাখা হয়েছে)
+                # আপনার অরিজিনাল ফরম্যাট সিলেকশন লজিক (অপরিবর্তিত)
                 if not download_url and "formats" in info:
                     valid_formats = [f for f in info["formats"] if f.get("vcodec") != "none" and f.get("acodec") != "none"]
                     if not valid_formats:
@@ -156,20 +158,18 @@ def extract_media(url: str):
                         "title": info.get("title", "Video"),
                         "thumbnail": info.get("thumbnail"),
                         "duration": info.get("duration"),
-                        "source": info.get("extractor_key", domain)
+                        "source": info.get("extractor_key", domain),
+                        "ext": info.get("ext", "mp4")
                     }
                     
                     cache[cache_key] = (result, time.time())
-                    if len(cache) > 2000: # ক্যাশ লিমিট কিছুটা বাড়ানো হয়েছে
+                    if len(cache) > 2000:
                         cache.pop(next(iter(cache)))
                     
                     return result
                     
         except Exception as e:
-            if not cookie_path:
-                logging.warning(f"Failed without cookies. Error: {str(e)}")
-            else:
-                logging.error(f"Failed with cookie {cookie_path}: {str(e)}")
+            logging.error(f"Error with {cookie_path or 'No Cookie'}: {str(e)}")
             continue 
 
     return None
@@ -179,12 +179,10 @@ def extract_media(url: str):
 # -----------------------------
 @app.get("/get_media")
 async def get_media(url: str, request: Request):
-    # আপনার অরিজিনাল API Key চেক লজিক
     key = request.headers.get("x-api-key")
     if not key or key not in VALID_API_KEYS:
         raise HTTPException(status_code=401, detail="Unauthorized: Invalid API Key")
 
-    # আপনার অরিজিনাল Rate Limit লজিক
     now = time.time()
     user_rates = rate_store.get(key, [])
     user_rates = [t for t in user_rates if now - t < RATE_WINDOW]
@@ -196,8 +194,8 @@ async def get_media(url: str, request: Request):
     if not url:
         raise HTTPException(status_code=400, detail="URL is required")
 
-    # আপনার অরিজিনাল URL ক্লিনিং লজিক
-    if "?" in url and ("facebook" in url or "fb" in url or "instagram" in url):
+    # URL ক্লিনিং
+    if "?" in url and any(x in url for x in ["facebook", "fb", "instagram", "tiktok"]):
         url = url.split("?")[0]
 
     if not is_valid_url(url):
@@ -207,10 +205,8 @@ async def get_media(url: str, request: Request):
         loop = asyncio.get_event_loop()
         result = await loop.run_in_executor(executor, extract_media, url)
         if not result:
-            raise HTTPException(status_code=404, detail="Could not extract video. Content may be private or IP blocked.")
+            raise HTTPException(status_code=404, detail="Could not extract video. Content may be private, protected, or unsupported.")
         return result
-    except HTTPException as he:
-        raise he
     except Exception as e:
         logging.error(f"Critical Error: {str(e)}")
         raise HTTPException(status_code=500, detail="Internal server error")
