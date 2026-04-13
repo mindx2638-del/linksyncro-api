@@ -12,7 +12,6 @@ import 'package:media_scanner/media_scanner.dart';
 import 'youtube_service.dart';
 import 'facebook_service.dart';
 import 'instagram_service.dart';
-import 'tiktok_service.dart'; 
 
 import 'package:photo_manager/photo_manager.dart';
 import 'video_gallery_page.dart'; // আপনার তৈরি করা ফাইল
@@ -122,7 +121,6 @@ class _HomeScreenState extends State<HomeScreen> {
   final YouTubeService _ytService = YouTubeService();
   final FacebookService _fbService = FacebookService();
   final InstagramService _igService = InstagramService();
-  final TikTokService _tiktokService = TikTokService(); 
   
   final Dio _dio = Dio(BaseOptions(
     connectTimeout: const Duration(seconds: 30),
@@ -185,27 +183,14 @@ class _HomeScreenState extends State<HomeScreen> {
       final folder = Directory("$root/Download/LinkSyncro");
       if (!await folder.exists()) await folder.create(recursive: true);
 
-      // --- ফাইল নেম ক্লিনিং ফিক্স শুরু ---
-      // ১. অবৈধ ক্যারেক্টার সরানো
-      String cleanName = task.videoTitle!
-          .replaceAll(RegExp(r'[<>:"/\\|?*]'), '') // প্যাথের জন্য নিষিদ্ধ চিহ্ন বাদ
-          .replaceAll(RegExp(r'[^\x00-\x7F]+'), '') // ইমোজি বা হিজিবিজি অক্ষর বাদ দেওয়া
-          .trim();
-
-      // ২. নাম যদি একদম খালি হয়ে যায় (সব ইমোজি থাকলে) তবে একটি ডিফল্ট নাম দেওয়া
-      if (cleanName.isEmpty) {
-        cleanName = "Video_${task.id}";
+      // ফাইল নেম ক্লিনিং এবং লেন্থ লিমিট (Error 36 Fix)
+      String cleanName = task.videoTitle!.replaceAll(RegExp(r'[<>:"/\\|?*]'), '').trim();
+      if (cleanName.length > 50) {
+        cleanName = cleanName.substring(0, 50).trim();
       }
-
-      // ৩. নাম খুব বেশি লম্বা হলে কেটে ছোট করা (অ্যান্ড্রয়েড লিমিট ফিক্স)
-      if (cleanName.length > 60) {
-        cleanName = cleanName.substring(0, 60).trim();
-      }
-      // --- ফাইল নেম ক্লিনিং ফিক্স শেষ ---
+      if (cleanName.isEmpty) cleanName = "Video_${task.id}";
 
       task.savePath = "${folder.path}/$cleanName.mp4";
-      
-      // ডাউনলোড শুরু করা
       await _executeDownload(task);
     } catch (e) {
       _handleTaskError(task, e);
@@ -213,154 +198,83 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<Map<String, dynamic>> _resolveLink(String input) async {
+    if (_ytService.isYouTubeLink(input)) return await _ytService.getVideoDetails(input);
+    if (_fbService.isFacebookLink(input)) return await _fbService.getVideoDetails(input);
+    if (_igService.isInstagramLink(input)) return await _igService.getVideoDetails(input);
 
-      if (input.contains("?")) {
-      if (input.contains("tiktok.com") || 
-          input.contains("instagram.com") || 
-          input.contains("fb.watch")) {
-         input = input.split("?")[0];
-      }
-    }
-  // ১. নির্দিষ্ট সার্ভিসগুলো চেক করা
-  if (_ytService.isYouTubeLink(input)) return await _ytService.getVideoDetails(input);
-  if (_fbService.isFacebookLink(input)) return await _fbService.getVideoDetails(input);
-  if (_igService.isInstagramLink(input)) return await _igService.getVideoDetails(input);
-  if (_tiktokService.isTikTokLink(input)) return await _tiktokService.getVideoDetails(input);
+    const String proxyUrl = "https://script.google.com/macros/s/AKfycbxsns846mdhcNrberwkvdB12yJ58pVg3yE6b4tbvp6rOWPxdjYvN7xeEDbIfID0_CrqJg/exec";
+    final uri = Uri.parse("$proxyUrl?url=${Uri.encodeComponent(input)}");
 
-  // ২. আপনার পাইথন এপিআই ইউআরএল (Render/Heroku থেকে পাওয়া)
-  const String pythonApiUrl = "https://linksyncro-api-1.onrender.com/get_media"; 
-  
-  try {
-    final uri = Uri.parse("$pythonApiUrl?url=${Uri.encodeComponent(input)}");
-
-    // পাইথন কোডে যেহেতু API Key সেট করেছিলেন, তাই এখানে headers যোগ করতে হবে
-    final response = await http.get(
-      uri,
-      headers: {
-        "x-api-key": "demo_key_123", // আপনার পাইথন কোডের VALID_API_KEYS এর সাথে মিল রাখুন
-      },
-    ).timeout(const Duration(seconds: 45));
-
+    final response = await http.get(uri).timeout(const Duration(seconds: 45));
     if (response.statusCode == 200) {
       return jsonDecode(utf8.decode(response.bodyBytes));
-    } else if (response.statusCode == 401) {
-      throw "Invalid API Key";
-    } else {
-      throw "Server returned error: ${response.statusCode}";
     }
-  } catch (e) {
-    // যদি আপনার পাইথন এপিআই কাজ না করে, তবে ব্যাকআপ হিসেবে গুগল স্ক্রিপ্ট রাখতে পারেন
-    debugPrint("Python API failed, trying backup...");
-    
-    // ব্যাকআপ হিসেবে আপনার আগের গুগল স্ক্রিপ্ট (ঐচ্ছিক)
-    const String backupUrl = "https://script.google.com/macros/s/AKfycbxsns846mdhcNrberwkvdB12yJ58pVg3yE6b4tbvp6rOWPxdjYvN7xeEDbIfID0_CrqJg/exec";
-    final backupUri = Uri.parse("$backupUrl?url=${Uri.encodeComponent(input)}");
-    final bResponse = await http.get(backupUri).timeout(const Duration(seconds: 45));
-    
-    if (bResponse.statusCode == 200) {
-      return jsonDecode(utf8.decode(bResponse.bodyBytes));
-    }
-    throw "Both primary and backup servers failed";
+    throw "Proxy server failed to respond";
   }
-}
 
   Future<void> _executeDownload(DownloadTask task) async {
-  RandomAccessFile? raf;
-  try {
-    final File file = File(task.savePath!);
-    int downloadedBytes = 0;
-    
-    // ফাইল আগে থেকে থাকলে তার সাইজ চেক করা (Resume করার জন্য)
-    if (await file.exists()) {
-      downloadedBytes = await file.length();
-    }
-
-    setState(() {
-      task.isProcessing = true;
-      task.isFinished = false;
-      task.statusText = task.isPaused ? "Paused" : "Downloading...";
-    });
-
-    task.cancelToken = CancelToken();
-
-    // Dio রিকোয়েস্ট অপ্টিমাইজেশন
-    final response = await _dio.get(
-      task.downloadUrl!,
-      onReceiveProgress: (received, total) {
-        if (total != -1) {
-          setState(() {
-            // টোটাল সাইজ = বর্তমানে যা আসছে + আগে যা ডাউনলোড হয়েছিল
-            task.progress = (received + downloadedBytes) / (total + downloadedBytes);
-          });
-        }
-      },
-      options: Options(
-        responseType: ResponseType.stream,
-        followRedirects: true,
-        validateStatus: (status) => status != null && status < 500,
-        headers: {
-          "range": "bytes=$downloadedBytes-",
-          // লেটেস্ট মোবাইল ইউজার এজেন্ট (টিকটক ফিক্সের জন্য সেরা)
-          "User-Agent": "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36",
-          "Referer": "https://www.tiktok.com/",
-          "Accept": "/",
-          "Connection": "keep-alive",
-        },
-      ),
-      cancelToken: task.cancelToken,
-    );
-
-    // ৪১৬ এরর মানে রেঞ্জ রিজেক্ট করেছে (হয়তো ফাইল অলরেডি ডাউনলোড শেষ)
-    if (response.statusCode == 416) {
+    RandomAccessFile? raf;
+    try {
+      File file = File(task.savePath!);
+      int downloadedBytes = 0;
       if (await file.exists()) {
-        // যদি ফাইলটি পূর্ণাঙ্গ না হয় তবে ডিলিট করে নতুন করে শুরু করবে
-        await file.delete();
-        setState(() => task.progress = 0);
-        return _executeDownload(task);
+        downloadedBytes = await file.length();
       }
-    }
 
-    // ফাইল রাইটিং শুরু
-    raf = await file.open(mode: FileMode.append);
-    final Stream<Uint8List> stream = response.data.stream;
-
-    await for (final List<int> chunk in stream) {
-      // যদি ইউজার পজ বা ক্যানসেল করে তবে রাইটিং থামিয়ে দেবে
-      if (task.isPaused || task.cancelToken.isCancelled) {
-        break;
-      }
-      await raf.writeFrom(chunk);
-    }
-
-    await raf.close();
-    raf = null; // মেমোরি ক্লিয়ার
-
-    // ডাউনলোড সাকসেসফুল হলে গ্যালারিতে পাঠানো
-    if (!task.isPaused && !task.cancelToken.isCancelled) {
-      await MediaScanner.loadMedia(path: task.savePath!);
       setState(() {
-        task.isProcessing = false;
-        task.isFinished = true;
-        task.progress = 1.0;
-        task.statusText = "Saved to Gallery";
+        task.isProcessing = true;
+        task.isFinished = false;
+        task.statusText = task.isPaused ? "Paused" : "Downloading...";
       });
+
+      task.cancelToken = CancelToken();
+
+      Response response = await _dio.get(
+        task.downloadUrl!,
+        onReceiveProgress: (received, total) {
+          if (total != -1) {
+            setState(() {
+              task.progress = (received + downloadedBytes) / (total + downloadedBytes);
+            });
+          }
+        },
+        options: Options(
+          responseType: ResponseType.stream,
+          headers: {"range": "bytes=$downloadedBytes-"},
+        ),
+        cancelToken: task.cancelToken,
+      );
+
+      if (response.statusCode == 416) {
+        if (await file.exists()) await file.delete();
+        setState(() => task.progress = 0);
+        await _executeDownload(task);
+        return;
+      }
+
+      raf = await file.open(mode: FileMode.append);
+      Stream<Uint8List> stream = response.data.stream;
+      await for (var chunk in stream) {
+        if (task.isPaused) break;
+        await raf.writeFrom(chunk);
+      }
+      await raf.close();
+
+      if (!task.isPaused) {
+        await MediaScanner.loadMedia(path: task.savePath!);
+        setState(() {
+          task.isProcessing = false;
+          task.isFinished = true;
+          task.progress = 1.0;
+          task.statusText = "Saved to Gallery";
+        });
+      }
+    } catch (e) {
+      if (raf != null) await raf.close();
+      if (e is DioException && CancelToken.isCancel(e)) return;
+      _handleTaskError(task, e);
     }
-  } catch (e) {
-    if (raf != null) await raf.close();
-    
-    // যদি ইউজার নিজে ক্যানসেল করে তবে এরর দেখাবে না
-    if (e is DioException && CancelToken.isCancel(e)) {
-      return;
-    }
-    
-    _handleTaskError(task, e);
-  } finally {
-    // নিশ্চিত করা যে ফাইল স্ট্রিম বন্ধ হয়েছে
-    if (raf != null) await raf.close();
   }
-}
-
-
 
   void _togglePauseResume(DownloadTask task) {
     if (task.isPaused) {
@@ -684,14 +598,5 @@ Widget build(BuildContext context) {
         ],
       ),
     );
-  }
-
-  @override
-  void dispose() {
-    _urlController.dispose();
-    for (var task in _downloadTasks) {
-      task.cancelToken.cancel("Cleanup");
-    }
-    super.dispose();
   }
 }
