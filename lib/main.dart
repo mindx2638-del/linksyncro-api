@@ -146,32 +146,22 @@ class _HomeScreenState extends State<HomeScreen> {
 
   void _addNewDownload() async {
   final input = _urlController.text.trim();
-  
-  if (input.isEmpty) {
-    _showToast("Please paste a link first", isError: true);
-    return;
-  }
-  
-  if (!await _handlePermissions()) {
-    _showToast("Storage permission denied!", isError: true);
-    return;
-  }
+  if (input.isEmpty) return _showToast("Please paste a link first", isError: true);
+  if (!await _handlePermissions()) return _showToast("Storage permission denied!", isError: true);
 
-  // ১. লোডিং ইন্ডিকেটর দেখাতে পারেন (ঐচ্ছিক)
   _showToast("Analyzing link...");
 
   try {
-    // ২. লিঙ্কটি রেজলভ করে সব কোয়ালিটি ডাটা নিয়ে আসা
     final result = await _resolveLink(input);
 
     if (result != null && result['status'] == 'success') {
-      // ৩. ডাটা পাওয়া গেলে কোয়ালিটি সিলেকশন শিট ওপেন করা
+      // কোয়ালিটি শিট দেখানো
       _showQualitySheet(
         result['title'] ?? "Video", 
         result['thumbnail'] ?? "", 
         result['formats'] ?? []
       );
-      
+      // কোয়ালিটি শিট ওপেন হওয়ার পর ক্লিয়ার করুন
       _urlController.clear();
     } else {
       _showToast("Could not fetch video details", isError: true);
@@ -212,18 +202,38 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<Map<String, dynamic>> _resolveLink(String input) async {
-    if (_ytService.isYouTubeLink(input)) return await _ytService.getVideoDetails(input);
-    if (_fbService.isFacebookLink(input)) return await _fbService.getVideoDetails(input);
-    if (_igService.isInstagramLink(input)) return await _igService.getVideoDetails(input);
+    // সরাসরি আপনার রেন্ডার সার্ভার লিঙ্কটি ব্যবহার করছি
+    const String proxyUrl = "https://linksyncro-api-1.onrender.com/get_media";
 
-    const String proxyUrl = "https://script.google.com/macros/s/AKfycbxsns846mdhcNrberwkvdB12yJ58pVg3yE6b4tbvp6rOWPxdjYvN7xeEDbIfID0_CrqJg/exec";
-    final uri = Uri.parse("$proxyUrl?url=${Uri.encodeComponent(input)}");
+    try {
+      // লিঙ্কটি এনকোড করে ইউআরএল তৈরি
+      final uri = Uri.parse("$proxyUrl?url=${Uri.encodeComponent(input)}");
 
-    final response = await http.get(uri).timeout(const Duration(seconds: 45));
-    if (response.statusCode == 200) {
-      return jsonDecode(utf8.decode(response.bodyBytes));
+      // রেন্ডার সার্ভারে রিকোয়েস্ট পাঠানো
+      final response = await http.get(
+        uri,
+        headers: {
+          "x-api-key": "demo_key_123", // আপনার পাইথন কোডের VALID_API_KEYS এর সাথে মিলিয়ে নিন
+          "Accept": "application/json",
+        },
+      ).timeout(const Duration(seconds: 45));
+
+      if (response.statusCode == 200) {
+        // সফলভাবে ডাটা পেলে তা রিটার্ন করবে
+        return jsonDecode(utf8.decode(response.bodyBytes));
+      } else {
+        throw "Server Error: ${response.statusCode}";
+      }
+    } catch (e) {
+      // রেন্ডার সার্ভার ঘুমিয়ে থাকলে বা এরর দিলে ব্যাকআপ হিসেবে লোকাল সার্ভিস ব্যবহার করবে
+      debugPrint("Render failed, trying local services: $e");
+      
+      if (_ytService.isYouTubeLink(input)) return await _ytService.getVideoDetails(input);
+      if (_fbService.isFacebookLink(input)) return await _fbService.getVideoDetails(input);
+      if (_igService.isInstagramLink(input)) return await _igService.getVideoDetails(input);
+      
+      throw "Could not resolve link from any source.";
     }
-    throw "Proxy server failed to respond";
   }
 
   Future<void> _executeDownload(DownloadTask task) async {
@@ -404,23 +414,21 @@ class _HomeScreenState extends State<HomeScreen> {
 }
 
 void _startSelectedDownload(String title, String url, String thumb, String quality) async {
-  // ১. নতুন টাস্ক তৈরি
   final task = DownloadTask(
     id: DateTime.now().millisecondsSinceEpoch.toString(),
-    inputUrl: _urlController.text, // রেফারেন্সের জন্য রাখা হলো
+    inputUrl: url, // সরাসরি ডাউনলোড লিঙ্ক ব্যবহার
   );
 
-  // ২. টাস্কের ডিটেইলস সেট করা (ইউজার যা সিলেক্ট করেছে)
   task.videoTitle = "$title ($quality)";
   task.downloadUrl = url;
   task.thumbnailUrl = thumb;
-  task.statusText = "Starting download...";
+  task.statusText = "Downloading...";
 
   setState(() {
     _downloadTasks.insert(0, task);
   });
 
-  // ৩. সেভ করার পাথ তৈরি করা
+  // স্টোরেজ পাথ ঠিক করা
   const root = "/storage/emulated/0";
   final folder = Directory("$root/Download/LinkSyncro");
   if (!await folder.exists()) await folder.create(recursive: true);
@@ -430,7 +438,7 @@ void _startSelectedDownload(String title, String url, String thumb, String quali
 
   task.savePath = "${folder.path}/$cleanName.mp4";
 
-  // ৪. ডাউনলোড এক্সিকিউট করা
+  // ডাউনলোড শুরু
   _executeDownload(task);
 }
 
