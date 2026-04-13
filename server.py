@@ -36,12 +36,10 @@ RATE_WINDOW = 60
 VALID_API_KEYS = {"demo_key_123", "premium_key_456"}
 
 USER_AGENTS = [
-    # TikTok Official Android App Agent (Priority)
-    "com.zhiliaoapp.musically/2022405010 (Linux; U; Android 12; en_US; Pixel 5; Build/S1B2.210901.041; Cronet/58.0.2991.0)",
-    "Mozilla/5.0 (Linux; Android 13; SM-S911B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.0.0 Mobile Safari/537.36",
-    "Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Mobile/15E148 Safari/604.1",
-    "Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Mobile Safari/537.36",
-    "Mozilla/5.0 (iPad; CPU OS 16_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.5 Mobile/15E148 Safari/604.1"
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (iPhone; CPU iPhone OS 17_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Mobile/15E148 Safari/604.1",
+    "Mozilla/5.0 (Linux; Android 11; Pixel 5) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/90.0.4430.91 Mobile Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
 ]
 
 # -----------------------------
@@ -96,7 +94,7 @@ def get_cookie_files(domain):
 # CORE ENGINE
 # -----------------------------
 def extract_media(url: str):
-    # ১. ক্যাশ চেক
+    # ক্যাশ চেক
     cache_key = hashlib.md5(url.encode()).hexdigest()
     if cache_key in cache:
         data, ts = cache[cache_key]
@@ -105,10 +103,8 @@ def extract_media(url: str):
             return data
 
     domain = urlparse(url).hostname or ""
-    # টিকটকের জন্য ডোমেইন চেক (শর্ট লিঙ্কসহ)
-    is_tiktok = any(d in domain for d in ["tiktok.com", "vt.tiktok", "vm.tiktok"])
     
-    # কুকি লিস্ট (প্রথমে কুকি ছাড়া, তারপর কুকি দিয়ে চেষ্টা)
+    # কুকি লিস্টের শুরুতে None রাখা হয়েছে যাতে প্রথমে কুকি ছাড়া ট্রাই করে
     cookie_list = [None] 
     cookie_list.extend(get_cookie_files(domain))
 
@@ -118,33 +114,21 @@ def extract_media(url: str):
             "quiet": True,
             "no_warnings": True,
             "noplaylist": True,
-            "socket_timeout": 60, # টাইমআউট একটু বাড়ানো হয়েছে
-            "retries": 10,       # রিট্রাই বাড়ানো হয়েছে
+            "socket_timeout": 45,
+            "retries": 5,
             "nocheckcertificate": True,
             "geo_bypass": True,
             "user_agent": random.choice(USER_AGENTS),
             "http_headers": {
-                "Accept": "*/*",
-                "Accept-Language": "en-US,en;q=0.9",
-                # টিকটকের জন্য প্রোপার রেফারার
-                "Referer": "https://www.tiktok.com/" if is_tiktok else "https://www.google.com/",
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+                "Accept-Language": "en-US,en;q=0.5",
+                "Referer": "https://www.google.com/",
             },
             "extractor_args": {
-                "youtube": {
-                    "player_client": ["android", "ios", "mweb"], 
-                    "player_skip": ["webpage", "configs"]
-                },
-                "instagram": {
-                    "player_client": ["android", "ios", "mweb"]
-                },
-                "facebook": {
-                    "player_client": ["android", "ios", "mweb"]
-                },
-                "tiktok": {
-                    "app_name": "google_play", 
-                    "is_test": False,
-                    "player_client": ["android", "ios", "mweb"]
-                }
+                "youtube": {"player_client": ["android", "ios", "mweb"], "player_skip": ["webpage", "configs"]},
+                "instagram": {"force_subtitles": False},
+                "facebook": {"force_generic_extractor": False},
+                "tiktok": {"app_name": "google_play", "is_test": False}
             }
         }
 
@@ -158,26 +142,15 @@ def extract_media(url: str):
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 info = ydl.extract_info(url, download=False)
                 
-                download_url = None
+                download_url = info.get("url")
                 
-                # ১. সরাসরি URL চেক এবং ৪MD৩ ফিল্টার
-                temp_url = info.get("url")
-                if temp_url and "403" not in temp_url:
-                    download_url = temp_url
-
-                # ২. যদি সরাসরি না পাওয়া যায়, তবে ফরম্যাট লিস্ট চেক
+                # যদি সরাসরি URL না থাকে, ফরম্যাট লিস্ট চেক করা (আপনার অরিজিনাল লজিক)
                 if not download_url and "formats" in info:
-                    # mp4 এবং অডিও আছে এমন ফরম্যাট খোঁজা
-                    valid_formats = [
-                        f for f in info["formats"] 
-                        if f.get("url") and f.get("vcodec") != "none" and f.get("acodec") != "none"
-                    ]
-                    
+                    valid_formats = [f for f in info["formats"] if f.get("vcodec") != "none" and f.get("acodec") != "none"]
                     if not valid_formats:
-                        valid_formats = [f for f in info["formats"] if f.get("url") and "403" not in f.get("url")]
-
+                        valid_formats = [f for f in info["formats"] if f.get("url")]
+                    
                     if valid_formats:
-                        # সেরা রেজোলিউশন আগে রাখা
                         valid_formats.sort(key=lambda x: (x.get("height") or 0), reverse=True)
                         download_url = valid_formats[0]["url"]
 
@@ -188,12 +161,7 @@ def extract_media(url: str):
                         "title": info.get("title", "Video"),
                         "thumbnail": info.get("thumbnail"),
                         "duration": info.get("duration"),
-                        "source": info.get("extractor_key", domain),
-                          "headers": {
-                            "User-Agent": "com.zhiliaoapp.musically/2022405010 (Linux; U; Android 12; en_US; Pixel 5; Build/S1B2.210901.041; Cronet/58.0.2991.0)",
-                            "Referer": "https://www.tiktok.com/" if is_tiktok else "https://www.google.com/",
-                        }
-
+                        "source": info.get("extractor_key", domain)
                     }
                     
                     cache[cache_key] = (result, time.time())
@@ -203,8 +171,11 @@ def extract_media(url: str):
                     return result
                     
         except Exception as e:
-            logging.error(f"Error with {cookie_path or 'No Cookie'}: {str(e)}")
-            continue 
+            if not cookie_path:
+                logging.warning(f"Failed without cookies. Error: {str(e)}. Now trying with available cookies...")
+            else:
+                logging.error(f"Failed with cookie {cookie_path}: {str(e)}")
+            continue # বর্তমান অপশন কাজ না করলে লুপের পরের কুকি ট্রাই করবে
 
     return None
 
