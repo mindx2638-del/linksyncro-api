@@ -139,7 +139,24 @@ def extract_media(url: str):
                 
                 download_url = info.get("url")
                 
-                # আপনার অরিজিনাল ফরম্যাট সিলেকশন লজিক (পুরোটা একই রাখা হয়েছে)
+                # ১. ভিডিওর সব উপলব্ধ কোয়ালিটি এবং সাইজ বের করার লজিক
+                formats_list = []
+                if "formats" in info:
+                    for f in info["formats"]:
+                        # শুধু সেই ভিডিওগুলো নিব যাতে ভিডিও এবং অডিও দুটোই আছে (Playable MP4)
+                        if f.get("vcodec") != "none" and f.get("acodec") != "none":
+                            size = f.get("filesize") or f.get("filesize_approx") or 0
+                            # বাইট থেকে মেগাবাইটে রূপান্তর
+                            size_mb = f"{round(size / (1024 * 1024), 2)} MB" if size > 0 else "Unknown"
+                            
+                            formats_list.append({
+                                "quality": f"{f.get('height', '0')}p",
+                                "size": size_mb,
+                                "url": f.get("url"),
+                                "ext": f.get("ext", "mp4")
+                            })
+
+                # ২. আপনার অরিজিনাল ফরম্যাট সিলেকশন লজিক (ডিফল্ট ইউআরএল এর জন্য)
                 if not download_url and "formats" in info:
                     valid_formats = [f for f in info["formats"] if f.get("vcodec") != "none" and f.get("acodec") != "none"]
                     if not valid_formats:
@@ -149,6 +166,7 @@ def extract_media(url: str):
                         valid_formats.sort(key=lambda x: (x.get("height") or 0), reverse=True)
                         download_url = valid_formats[0]["url"]
 
+                # ৩. রেজাল্ট রিটার্ন (এখন এতে 'formats' লিস্ট থাকবে)
                 if download_url:
                     result = {
                         "status": "success",
@@ -156,11 +174,12 @@ def extract_media(url: str):
                         "title": info.get("title", "Video"),
                         "thumbnail": info.get("thumbnail"),
                         "duration": info.get("duration"),
-                        "source": info.get("extractor_key", domain)
+                        "source": info.get("extractor_key", domain),
+                        "formats": formats_list # এই লিস্টটিই আপনার Flutter অ্যাপে পপ-আপে দেখাবে
                     }
                     
                     cache[cache_key] = (result, time.time())
-                    if len(cache) > 2000: # ক্যাশ লিমিট কিছুটা বাড়ানো হয়েছে
+                    if len(cache) > 2000:
                         cache.pop(next(iter(cache)))
                     
                     return result

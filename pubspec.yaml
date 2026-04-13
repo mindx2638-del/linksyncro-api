@@ -10,43 +10,22 @@ dependencies:
   flutter:
     sdk: flutter
   cupertino_icons: ^1.0.6
-  
-  # API এবং নেটওয়ার্কিং (আপনার লজিক ঠিক আছে)
   http: ^1.2.0
   dio: ^5.4.0
-  
-  # ফাইল হ্যান্ডলিং ও গ্যালারি (Gal যোগ করার পরামর্শ দিচ্ছি সহজ ডাউনলোডের জন্য)
   path_provider: ^2.1.2
   permission_handler: ^11.3.0
   media_scanner: ^2.2.0
-  gal: ^2.3.0  # এটি সব ধরনের মিডিয়া ফাইল গ্যালারিতে সেভ করার জন্য বর্তমানের বেস্ট প্যাকেজ
-
-  # ভিডিও প্লেয়ার ও স্ট্রিমিং (আপনার লজিক ঠিক আছে)
   video_player: ^2.10.1  
   chewie: ^1.13.0       
   cached_network_image: ^3.3.1
-  
-  # ভিডিও প্রসেসিং ও এক্সট্রাকশন (অতিরিক্ত সাপোর্ট)
+  photo_manager: ^3.9.0
   youtube_explode_dart: ^3.0.5
-  
-  # কন্ট্রোল ও সেটিংস (আপনার লজিক ঠিক আছে)
   screen_brightness: ^2.1.7
   shared_preferences: ^2.2.2
   subtitle: ^0.1.0
   volume_controller: ^2.0.3  
-  
-  # অডিও ও ব্যাকগ্রাউন্ড সার্ভিস (আপনার লজিক ঠিক আছে)
   audio_service: ^0.18.12
   just_audio: ^0.9.36
 
-  # অতিরিক্ত: শেয়ারিং লজিক (যেকোনো লিঙ্ক অ্যাপে শেয়ার করার জন্য)
-  receive_sharing_intent: ^1.6.3 # অন্য অ্যাপ (FB/YT) থেকে লিঙ্ক শেয়ার দিলে আপনার অ্যাপ ওপেন হবে
-
-dev_dependencies:
-  flutter_test:
-    sdk: flutter
-  flutter_lints: ^3.0.0
-
 flutter:
   uses-material-design: true
-  # যদি কোনো কাস্টম আইকন বা ফন্ট ব্যবহার করেন তবে এখানে যোগ করবেন
