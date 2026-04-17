@@ -210,33 +210,56 @@ class _HomeScreenState extends State<HomeScreen> {
 }
 
   Future<Map<String, dynamic>> _resolveLink(String input) async {
-    // ১. আপনার প্রধান সার্ভিসগুলো আগে চেক করা (ইউটিউব, ফেসবুক, ইনস্টাগ্রাম)
+  // ১. আপনার লোকাল সার্ভিসগুলো (YT, FB, IG) আগে চেক করা
+  try {
     if (_ytService.isYouTubeLink(input)) return await _ytService.getVideoDetails(input);
     if (_fbService.isFacebookLink(input)) return await _fbService.getVideoDetails(input);
     if (_igService.isInstagramLink(input)) return await _igService.getVideoDetails(input);
-
-    // ২. ফলব্যাক: যদি উপরের গুলো না মিলে, তবে আপনার নতুন ডকার এপিআই ট্রাই করা
-    const String dockerApiUrl = "https://linksyncro-api-2.onrender.com/extract?url=";
-    try {
-      final response = await http.get(Uri.parse("$dockerApiUrl${Uri.encodeComponent(input)}")).timeout(const Duration(seconds: 45));
-      if (response.statusCode == 200) {
-        final data = jsonDecode(utf8.decode(response.bodyBytes));
-        if (data['status'] == 'success') return data;
-      }
-    } catch (_) {
-      // এপিআই ফেইল করলে নিচের গুগল স্ক্রিপ্টে যাবে
-    }
-
-    // ৩. সর্বশেষ ব্যাকআপ: Google Apps Script (যা আপনি জাগিয়ে রাখতে ব্যবহার করছেন)
-    const String proxyUrl = "https://script.google.com/macros/s/AKfycbw9m2lQnhp9W1j3gjLyRSFzDWT5puV1E24F_RwNqxOjbpsuyin1NTHDcFoD3AfmKgvvEA/exec";
-    final uri = Uri.parse("$proxyUrl?url=${Uri.encodeComponent(input)}");
-
-    final response = await http.get(uri).timeout(const Duration(seconds: 45));
-    if (response.statusCode == 200) {
-      return jsonDecode(utf8.decode(response.bodyBytes));
-    }
-    throw "Server is not responding. Please try again later.";
+  } catch (e) {
+    debugPrint("Local Service Error: $e");
   }
+
+  // ২. ফলব্যাক: আপনার নতুন শক্তিশালী পাইথন এপিআই (Render)
+  // আপনার পাইথন কোডে রুট হলো '/get_media' এবং পোর্ট রেন্ডার নিজেই হ্যান্ডেল করে
+  const String dockerApiUrl = "https://linksyncro-api-2.onrender.com/get_media?url=";
+  
+  try {
+    final response = await http.get(
+      Uri.parse("$dockerApiUrl${Uri.encodeComponent(input)}"),
+      headers: {
+        "x-api-key": "demo_key_123", // আপনার পাইথন কোডে দেওয়া কি-টি এখানে বসালাম
+        "Accept": "application/json",
+      },
+    ).timeout(const Duration(seconds: 50));
+
+    if (response.statusCode == 200) {
+      final data = jsonDecode(utf8.decode(response.bodyBytes));
+      if (data['status'] == 'success') return data;
+    } else if (response.statusCode == 429) {
+      throw "Too many requests. Please wait a minute.";
+    }
+  } catch (e) {
+    debugPrint("Docker API Error: $e");
+    // এপিআই ফেইল করলে অটোমেটিক ৩ নম্বর স্টেপে যাবে
+  }
+
+  // ৩. সর্বশেষ ব্যাকআপ: Google Apps Script
+  const String proxyUrl = "https://script.google.com/macros/s/AKfycbw9m2lQnhp9W1j3gjLyRSFzDWT5puV1E24F_RwNqxOjbpsuyin1NTHDcFoD3AfmKgvvEA/exec";
+  
+  try {
+    final uri = Uri.parse("$proxyUrl?url=${Uri.encodeComponent(input)}");
+    final response = await http.get(uri).timeout(const Duration(seconds: 45));
+
+    if (response.statusCode == 200) {
+      final data = jsonDecode(utf8.decode(response.bodyBytes));
+      return data;
+    }
+  } catch (e) {
+    debugPrint("Proxy Error: $e");
+  }
+
+   throw "Server is not responding. Please try again later.";
+}
 
   Future<void> _executeDownload(DownloadTask task) async {
     RandomAccessFile? raf;
