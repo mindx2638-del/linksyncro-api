@@ -7,9 +7,9 @@
 .instagram.com	TRUE	/	TRUE	1810523617	mid	adsN4QALAAG7miESkmZqRuIAByor
 .instagram.com	TRUE	/	TRUE	1810523617	ps_l	1
 .instagram.com	TRUE	/	TRUE	1810523617	ps_n	1
-.instagram.com	TRUE	/	TRUE	1776568697	dpr	1.5
-.instagram.com	TRUE	/	TRUE	1776568697	wd	1280x585
-.instagram.com	TRUE	/	TRUE	1810523899	csrftoken	MxBUmiXicL0oisa19uRRzTHvolDGN0Yz
-.instagram.com	TRUE	/	TRUE	1783739899	ds_user_id	37148208825
-.instagram.com	TRUE	/	TRUE	1807499845	sessionid	37148208825%3Au3Pe8vEO3DpSL1%3A14%3AAYhlMq1pnyCjR2ipR9zMm6-sRw4UrVW4gzPC_HojGA
-.instagram.com	TRUE	/	TRUE	0	rur	"VLL\05437148208825\0541807499899:01feaf8d3fdfcd9c4353439eec4d853c2ad1c3ae53534cd4550313a9179bbab14a5cd82e"
+.instagram.com	TRUE	/	TRUE	1777058076	dpr	1.5
+.instagram.com	TRUE	/	TRUE	1777058076	wd	1280x585
+.instagram.com	TRUE	/	TRUE	1811013283	csrftoken	MxBUmiXicL0oisa19uRRzTHvolDGN0Yz
+.instagram.com	TRUE	/	TRUE	1784229283	ds_user_id	37148208825
+.instagram.com	TRUE	/	TRUE	0	rur	"HIL\05437148208825\0541807989282:01fe6d202906b9716915a1874eb2d706b1f855bd774e8b64ceb9a6ab86828fcfc192742a"
+.instagram.com	TRUE	/	TRUE	1807989283	sessionid	37148208825%3Au3Pe8vEO3DpSL1%3A14%3AAYj_eksQ31-IWGTQEYXx1Shft2-4vzzz4e0Rqo1tSw
