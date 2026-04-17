@@ -104,16 +104,17 @@ def extract_media(url: str):
 
     for cookie_path in cookie_list:
         ydl_opts = {
-            # ফরমেট লজিক আপনার দেওয়াটাই রাখা হয়েছে (MP4 priority)
-            "format": "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best",
-            "quiet": True,
-            "no_warnings": True,
-            "noplaylist": True,
-            "socket_timeout": 45,
-            "retries": 10, # আরও স্টেবল করার জন্য বাড়ানো হয়েছে
-            "nocheckcertificate": True,
-            "geo_bypass": True,
-            "user_agent": random.choice(USER_AGENTS),
+             "format": "bestvideo+bestaudio/best",
+             "merge_output_format": "mp4",
+             "ffmpeg_location": "/usr/bin/ffmpeg",    
+             "quiet": True,
+             "no_warnings": True,
+             "noplaylist": True,
+             "socket_timeout": 60, 
+             "retries": 10,
+             "nocheckcertificate": True,
+             "geo_bypass": True,
+             "user_agent": random.choice(USER_AGENTS),
             "http_headers": {
                 "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
                 "Accept-Language": "en-US,en;q=0.5",
