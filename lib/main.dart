@@ -169,97 +169,48 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<void> _startDownloadProcess(DownloadTask task) async {
-  try {
-    // ১. সার্ভার থেকে ভিডিওর ডিটেইলস নিয়ে আসা
-    final result = await _resolveLink(task.inputUrl);
-    
-    setState(() {
-      task.videoTitle = result['title'] ?? "Video_${task.id}";
-      task.thumbnailUrl = result['thumbnail'];
-    });
-
-    // ২. ফাইল নেম ক্লিনিং লজিক (যা আপনার কোডে ছিল)
-    String cleanName = task.videoTitle!.replaceAll(RegExp(r'[<>:"/\\|?*]'), '').trim();
-    if (cleanName.length > 50) cleanName = cleanName.substring(0, 50).trim();
-    if (cleanName.isEmpty) cleanName = "Video_${task.id}";
-
-    const root = "/storage/emulated/0";
-    final folder = Directory("$root/Download/LinkSyncro");
-    if (!await folder.exists()) await folder.create(recursive: true);
-    task.savePath = "${folder.path}/$cleanName.mp4";
-
-    // ৩. কোয়ালিটি সিলেকশন লজিক
-    // যদি এপিআই থেকে অনেকগুলো ফরম্যাট আসে, তবে ডায়ালগ দেখাবে
-    if (result['formats'] != null && (result['formats'] as List).isNotEmpty) {
-      _showQualityDialog(task, result['formats']);
-    } 
-    // যদি শুধু একটি ডিরেক্ট ইউআরএল থাকে, তবে সরাসরি ডাউনলোড শুরু করবে
-    else if (result['url'] != null) {
+    try {
+      final result = await _resolveLink(task.inputUrl);
       setState(() {
         task.downloadUrl = result['url'];
+        task.videoTitle = result['title'] ?? "Video_${task.id}";
+        task.thumbnailUrl = result['thumbnail'];
       });
-      await _executeDownload(task);
-    } 
-    else {
-      throw "Invalid response: No download link found.";
-    }
 
-  } catch (e) {
-    _handleTaskError(task, e);
+      if (task.downloadUrl == null) throw "Invalid response from server";
+
+      const root = "/storage/emulated/0";
+      final folder = Directory("$root/Download/LinkSyncro");
+      if (!await folder.exists()) await folder.create(recursive: true);
+
+      // ফাইল নেম ক্লিনিং এবং লেন্থ লিমিট (Error 36 Fix)
+      String cleanName = task.videoTitle!.replaceAll(RegExp(r'[<>:"/\\|?*]'), '').trim();
+      if (cleanName.length > 50) {
+        cleanName = cleanName.substring(0, 50).trim();
+      }
+      if (cleanName.isEmpty) cleanName = "Video_${task.id}";
+
+      task.savePath = "${folder.path}/$cleanName.mp4";
+      await _executeDownload(task);
+    } catch (e) {
+      _handleTaskError(task, e);
+    }
   }
-}
 
   Future<Map<String, dynamic>> _resolveLink(String input) async {
-  // ১. আপনার লোকাল সার্ভিসগুলো (YT, FB, IG) আগে চেক করা
-  try {
     if (_ytService.isYouTubeLink(input)) return await _ytService.getVideoDetails(input);
     if (_fbService.isFacebookLink(input)) return await _fbService.getVideoDetails(input);
     if (_igService.isInstagramLink(input)) return await _igService.getVideoDetails(input);
-  } catch (e) {
-    debugPrint("Local Service Error: $e");
-  }
 
-  // ২. ফলব্যাক: আপনার নতুন শক্তিশালী পাইথন এপিআই (Render)
-  // আপনার পাইথন কোডে রুট হলো '/get_media' এবং পোর্ট রেন্ডার নিজেই হ্যান্ডেল করে
-  const String dockerApiUrl = "https://linksyncro-api-2.onrender.com/get_media?url=";
-  
-  try {
-    final response = await http.get(
-      Uri.parse("$dockerApiUrl${Uri.encodeComponent(input)}"),
-      headers: {
-        "x-api-key": "demo_key_123", // আপনার পাইথন কোডে দেওয়া কি-টি এখানে বসালাম
-        "Accept": "application/json",
-      },
-    ).timeout(const Duration(seconds: 50));
-
-    if (response.statusCode == 200) {
-      final data = jsonDecode(utf8.decode(response.bodyBytes));
-      if (data['status'] == 'success') return data;
-    } else if (response.statusCode == 429) {
-      throw "Too many requests. Please wait a minute.";
-    }
-  } catch (e) {
-    debugPrint("Docker API Error: $e");
-    // এপিআই ফেইল করলে অটোমেটিক ৩ নম্বর স্টেপে যাবে
-  }
-
-  // ৩. সর্বশেষ ব্যাকআপ: Google Apps Script
-  const String proxyUrl = "https://script.google.com/macros/s/AKfycbw9m2lQnhp9W1j3gjLyRSFzDWT5puV1E24F_RwNqxOjbpsuyin1NTHDcFoD3AfmKgvvEA/exec";
-  
-  try {
+    const String proxyUrl = "https://script.google.com/macros/s/AKfycbxsns846mdhcNrberwkvdB12yJ58pVg3yE6b4tbvp6rOWPxdjYvN7xeEDbIfID0_CrqJg/exec";
     final uri = Uri.parse("$proxyUrl?url=${Uri.encodeComponent(input)}");
+
     final response = await http.get(uri).timeout(const Duration(seconds: 45));
-
     if (response.statusCode == 200) {
-      final data = jsonDecode(utf8.decode(response.bodyBytes));
-      return data;
+      return jsonDecode(utf8.decode(response.bodyBytes));
     }
-  } catch (e) {
-    debugPrint("Proxy Error: $e");
+    throw "Proxy server failed to respond";
   }
-
-   throw "Server is not responding. Please try again later.";
-}
 
   Future<void> _executeDownload(DownloadTask task) async {
     RandomAccessFile? raf;
@@ -324,68 +275,6 @@ class _HomeScreenState extends State<HomeScreen> {
       _handleTaskError(task, e);
     }
   }
-
-  void _showQualityDialog(DownloadTask task, List<dynamic> formats) {
-  final bool isDark = Theme.of(context).brightness == Brightness.dark;
-
-  showModalBottomSheet(
-    context: context,
-    backgroundColor: isDark ? const Color(0xFF1C1F2E) : Colors.white,
-    shape: const RoundedRectangleBorder(
-      borderRadius: BorderRadius.vertical(top: Radius.circular(25)),
-    ),
-    builder: (context) {
-      return Container(
-        padding: const EdgeInsets.symmetric(vertical: 20),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text(
-              "Select Video Quality",
-              style: TextStyle(
-                fontSize: 18,
-                fontWeight: FontWeight.bold,
-                color: isDark ? Colors.white : Colors.black87,
-              ),
-            ),
-            const SizedBox(height: 15),
-            Flexible(
-              child: ListView.builder(
-                shrinkWrap: true,
-                itemCount: formats.length,
-                itemBuilder: (context, index) {
-                  final f = formats[index];
-                  // রেজোলিউশন নাম (যেমন: 1080p, 720p)
-                  String quality = f['quality'] ?? "Unknown";
-                  
-                  return ListTile(
-                    leading: const Icon(Icons.hd_outlined, color: Colors.indigo),
-                    title: Text(
-                      quality,
-                      style: TextStyle(color: isDark ? Colors.white : Colors.black87),
-                    ),
-                    subtitle: Text(
-                      "${f['ext']?.toString().toUpperCase() ?? 'MP4'} - ${f['note'] ?? ''}",
-                      style: TextStyle(color: isDark ? Colors.white54 : Colors.black54),
-                    ),
-                    onTap: () {
-                      Navigator.pop(context); // ডায়ালগ বন্ধ হবে
-                      setState(() {
-                        task.downloadUrl = f['url'];
-                        task.statusText = "Downloading $quality...";
-                      });
-                      _executeDownload(task); // ডাউনলোড শুরু হবে
-                    },
-                  );
-                },
-              ),
-            ),
-          ],
-        ),
-      );
-    },
-  );
-}
 
   void _togglePauseResume(DownloadTask task) {
     if (task.isPaused) {
