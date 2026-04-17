@@ -89,7 +89,7 @@ def get_cookie_files(domain):
 # CORE ENGINE
 # -----------------------------
 def extract_media(url: str):
-    # ১. ক্যাশ চেক লজিক (অরিজিনাল)
+    # ১. ক্যাশ চেক লজিক
     cache_key = hashlib.md5(url.encode()).hexdigest()
     if cache_key in cache:
         data, ts = cache[cache_key]
@@ -128,34 +128,31 @@ def extract_media(url: str):
 
         if cookie_path:
             ydl_opts["cookiefile"] = cookie_path
-            logging.info(f"Attempting with Cookie: {cookie_path}")
-        else:
-            logging.info(f"Attempting WITHOUT cookies for: {url}")
 
         try:
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 info = ydl.extract_info(url, download=False)
                 
-                # ২. মাল্টি-কোয়ালিটি ফরম্যাট লিস্ট তৈরি (নতুন লজিক)
+                # ২. রেজোলিউশন লিস্ট তৈরি করার লজিক (নতুন যোগ করা হয়েছে)
                 formats_list = []
                 if "formats" in info:
                     for f in info["formats"]:
-                        # শুধু ইউআরএল এবং রেজোলিউশন থাকা ফাইলগুলো ফিল্টার করুন
+                        # শুধু ইউআরএল এবং ভিডিওর উচ্চতা (height) আছে এমন ফরম্যাট নিন
                         if f.get("url") and f.get("height"):
-                            # চেক করছি এটি কি কম্বাইন্ড (অডিও+ভিডিও) নাকি শুধু ভিডিও
+                            # চেক করুন অডিও এবং ভিডিও দুটোই আছে কি না (Combined)
                             is_combined = f.get("vcodec") != "none" and f.get("acodec") != "none"
                             
                             formats_list.append({
                                 "quality": f"{f.get('height')}p",
                                 "url": f.get("url"),
                                 "ext": f.get("ext", "mp4"),
-                                "note": "Direct" if is_combined else "High Quality (No Audio)"
+                                "note": "Combined" if is_combined else "No Audio/Video Only"
                             })
 
-                # ডুপ্লিকেট বাদ দিয়ে রেজোলিউশন অনুযায়ী সাজানো (বড় থেকে ছোট)
+                # ডুপ্লিকেট বাদ দিয়ে বড় থেকে ছোট রেজোলিউশন অনুযায়ী সাজানো
                 seen_quality = set()
                 final_formats = []
-                # height অনুযায়ী সর্ট করা
+                # height অনুযায়ী সর্ট করা (যেমন ১০৮০পি আগে আসবে)
                 sorted_formats = sorted(formats_list, key=lambda x: int(x['quality'][:-1]), reverse=True)
                 
                 for f in sorted_formats:
@@ -163,23 +160,23 @@ def extract_media(url: str):
                         final_formats.append(f)
                         seen_quality.add(f['quality'])
 
-                # ৩. সেরা (Best) ডাউনলোড ইউআরএল ঠিক করা (অরিজিনাল লজিক অনুযায়ী)
-                best_url = info.get("url")
-                if not best_url and final_formats:
-                    best_url = final_formats[0]["url"]
+                # ৩. বেস্ট ইউআরএল নির্ধারণ
+                download_url = info.get("url")
+                if not download_url and final_formats:
+                    download_url = final_formats[0]["url"]
 
-                if best_url:
+                if download_url:
                     result = {
                         "status": "success",
-                        "url": best_url,
+                        "url": download_url,
                         "title": info.get("title", "Video"),
                         "thumbnail": info.get("thumbnail"),
                         "duration": info.get("duration"),
-                        "formats": final_formats, # এই লিস্টটিই এখন ফ্লাটার অ্যাপ পাবে
+                        "formats": final_formats, # এই কি-টি (Key) ফ্লাটার অ্যাপের জন্য খুব জরুরি
                         "source": info.get("extractor_key", domain)
                     }
                     
-                    # ক্যাশ সেভ করা
+                    # ক্যাশ আপডেট
                     cache[cache_key] = (result, time.time())
                     if len(cache) > 2000:
                         cache.pop(next(iter(cache)))
@@ -188,7 +185,7 @@ def extract_media(url: str):
                     
         except Exception as e:
             if not cookie_path:
-                logging.warning(f"Failed without cookies. Error: {str(e)}")
+                logging.warning(f"Failed without cookies: {str(e)}")
             else:
                 logging.error(f"Failed with cookie {cookie_path}: {str(e)}")
             continue 
