@@ -2,35 +2,48 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 
 class InstagramService {
+  // আপনার নতুন ডকার এপিআই লিঙ্ক
+  final String myApiUrl = "https://linksyncro-api-2.onrender.com/extract?url=";
+
   // ১. লিঙ্কটি ইনস্টাগ্রামের কি না তা চেক করা
   bool isInstagramLink(String url) {
-    return url.contains("instagram.com");
+    if (url.isEmpty) return false;
+    return url.contains("instagram.com") || url.contains("instagr.am");
   }
 
-  // ২. আপনার Render Python Server থেকে ডাটা আনা
+  // ২. আপনার নতুন Render Docker Server থেকে ডাটা আনা
   Future<Map<String, dynamic>> getVideoDetails(String url) async {
     try {
-      // পরিবর্তন: URL এর শেষে /get_media যোগ করা হয়েছে
-      const String pythonApiUrl = "https://linksyncro-api-1.onrender.com/get_media"; 
-      
-      final uri = Uri.parse("$pythonApiUrl?url=${Uri.encodeComponent(url)}");
+      // ইউটিউব সার্ভিসের মতো একই ফরম্যাটে রিকোয়েস্ট পাঠানো
+      final uri = Uri.parse("$myApiUrl${Uri.encodeComponent(url.trim())}");
 
       final response = await http.get(
         uri,
         headers: {
-          "x-api-key": "demo_key_123", // পাইথন কোডের API Key এর সাথে মিল থাকতে হবে
+          "x-api-key": "demo_key_123", // আপনার পাইথন কোডে API Key থাকলে এটি থাকবে
         },
-      ).timeout(const Duration(seconds: 45));
+      ).timeout(const Duration(seconds: 60)); // ইনস্টাগ্রাম প্রসেসিং এর জন্য ৬০ সেকেন্ড সময় দেওয়া হয়েছে
 
       if (response.statusCode == 200) {
-        return jsonDecode(utf8.decode(response.bodyBytes));
+        final Map<String, dynamic> data = jsonDecode(utf8.decode(response.bodyBytes));
+        
+        if (data['status'] == 'success') {
+          return {
+            'title': data['title'] ?? "Instagram_Video_${DateTime.now().millisecondsSinceEpoch}",
+            'url': data['url'], // সার্ভার থেকে আসা ডিরেক্ট ভিডিও লিঙ্ক
+            'thumbnail': data['thumbnail'] ?? "",
+            'author': "Instagram",
+          };
+        } else {
+          throw data['message'] ?? "Could not extract Instagram media.";
+        }
       } else {
-        // সার্ভার থেকে আসা এরর মেসেজ দেখার জন্য এটি সহায়ক
         throw "Server Error: ${response.statusCode}";
       }
     } catch (e) {
       print("Instagram Service Error: $e");
-      rethrow; 
+      // ইউজারকে দেখানোর জন্য সহজ ভাষায় এরর পাঠানো
+      throw "Instagram Error: ${e.toString().replaceAll("Exception:", "")}";
     }
   }
 }
