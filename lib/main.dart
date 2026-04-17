@@ -1,4 +1,4 @@
-Import 'dart:io';
+import 'dart:io';
 import 'dart:convert';
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
@@ -169,33 +169,45 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<void> _startDownloadProcess(DownloadTask task) async {
-    try {
-      final result = await _resolveLink(task.inputUrl);
+  try {
+    // ১. সার্ভার থেকে ভিডিওর ডিটেইলস নিয়ে আসা
+    final result = await _resolveLink(task.inputUrl);
+    
+    setState(() {
+      task.videoTitle = result['title'] ?? "Video_${task.id}";
+      task.thumbnailUrl = result['thumbnail'];
+    });
+
+    // ২. ফাইল নেম ক্লিনিং লজিক (যা আপনার কোডে ছিল)
+    String cleanName = task.videoTitle!.replaceAll(RegExp(r'[<>:"/\\|?*]'), '').trim();
+    if (cleanName.length > 50) cleanName = cleanName.substring(0, 50).trim();
+    if (cleanName.isEmpty) cleanName = "Video_${task.id}";
+
+    const root = "/storage/emulated/0";
+    final folder = Directory("$root/Download/LinkSyncro");
+    if (!await folder.exists()) await folder.create(recursive: true);
+    task.savePath = "${folder.path}/$cleanName.mp4";
+
+    // ৩. কোয়ালিটি সিলেকশন লজিক
+    // যদি এপিআই থেকে অনেকগুলো ফরম্যাট আসে, তবে ডায়ালগ দেখাবে
+    if (result['formats'] != null && (result['formats'] as List).isNotEmpty) {
+      _showQualityDialog(task, result['formats']);
+    } 
+    // যদি শুধু একটি ডিরেক্ট ইউআরএল থাকে, তবে সরাসরি ডাউনলোড শুরু করবে
+    else if (result['url'] != null) {
       setState(() {
         task.downloadUrl = result['url'];
-        task.videoTitle = result['title'] ?? "Video_${task.id}";
-        task.thumbnailUrl = result['thumbnail'];
       });
-
-      if (task.downloadUrl == null) throw "Invalid response from server";
-
-      const root = "/storage/emulated/0";
-      final folder = Directory("$root/Download/LinkSyncro");
-      if (!await folder.exists()) await folder.create(recursive: true);
-
-      // ফাইল নেম ক্লিনিং এবং লেন্থ লিমিট (Error 36 Fix)
-      String cleanName = task.videoTitle!.replaceAll(RegExp(r'[<>:"/\\|?*]'), '').trim();
-      if (cleanName.length > 50) {
-        cleanName = cleanName.substring(0, 50).trim();
-      }
-      if (cleanName.isEmpty) cleanName = "Video_${task.id}";
-
-      task.savePath = "${folder.path}/$cleanName.mp4";
       await _executeDownload(task);
-    } catch (e) {
-      _handleTaskError(task, e);
+    } 
+    else {
+      throw "Invalid response: No download link found.";
     }
+
+  } catch (e) {
+    _handleTaskError(task, e);
   }
+}
 
   Future<Map<String, dynamic>> _resolveLink(String input) async {
     // ১. আপনার প্রধান সার্ভিসগুলো আগে চেক করা (ইউটিউব, ফেসবুক, ইনস্টাগ্রাম)
@@ -289,6 +301,68 @@ class _HomeScreenState extends State<HomeScreen> {
       _handleTaskError(task, e);
     }
   }
+
+  void _showQualityDialog(DownloadTask task, List<dynamic> formats) {
+  final bool isDark = Theme.of(context).brightness == Brightness.dark;
+
+  showModalBottomSheet(
+    context: context,
+    backgroundColor: isDark ? const Color(0xFF1C1F2E) : Colors.white,
+    shape: const RoundedRectangleBorder(
+      borderRadius: BorderRadius.vertical(top: Radius.circular(25)),
+    ),
+    builder: (context) {
+      return Container(
+        padding: const EdgeInsets.symmetric(vertical: 20),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              "Select Video Quality",
+              style: TextStyle(
+                fontSize: 18,
+                fontWeight: FontWeight.bold,
+                color: isDark ? Colors.white : Colors.black87,
+              ),
+            ),
+            const SizedBox(height: 15),
+            Flexible(
+              child: ListView.builder(
+                shrinkWrap: true,
+                itemCount: formats.length,
+                itemBuilder: (context, index) {
+                  final f = formats[index];
+                  // রেজোলিউশন নাম (যেমন: 1080p, 720p)
+                  String quality = f['quality'] ?? "Unknown";
+                  
+                  return ListTile(
+                    leading: const Icon(Icons.hd_outlined, color: Colors.indigo),
+                    title: Text(
+                      quality,
+                      style: TextStyle(color: isDark ? Colors.white : Colors.black87),
+                    ),
+                    subtitle: Text(
+                      "${f['ext']?.toString().toUpperCase() ?? 'MP4'} - ${f['note'] ?? ''}",
+                      style: TextStyle(color: isDark ? Colors.white54 : Colors.black54),
+                    ),
+                    onTap: () {
+                      Navigator.pop(context); // ডায়ালগ বন্ধ হবে
+                      setState(() {
+                        task.downloadUrl = f['url'];
+                        task.statusText = "Downloading $quality...";
+                      });
+                      _executeDownload(task); // ডাউনলোড শুরু হবে
+                    },
+                  );
+                },
+              ),
+            ),
+          ],
+        ),
+      );
+    },
+  );
+}
 
   void _togglePauseResume(DownloadTask task) {
     if (task.isPaused) {
@@ -523,7 +597,7 @@ Widget build(BuildContext context) {
           BoxShadow(
             color: Colors.black.withOpacity(0.03),
             blurRadius: 15,
-            offset: const Offset(0, 😎,
+            offset: const Offset(0, 8),
           )
         ],
       ),
@@ -597,7 +671,7 @@ Widget build(BuildContext context) {
               valueColor: AlwaysStoppedAnimation(task.isFinished ? Colors.greenAccent : Colors.indigo),
             ),
           ),
-          const SizedBox(height: 😎,
+          const SizedBox(height: 8),
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
