@@ -198,7 +198,7 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<Map<String, dynamic>> _resolveLink(String input) async {
-  // ১. প্রথমে local services check
+  // ১. Local services
   if (_ytService.isYouTubeLink(input)) {
     return await _ytService.getVideoDetails(input);
   }
@@ -209,7 +209,7 @@ class _HomeScreenState extends State<HomeScreen> {
     return await _igService.getVideoDetails(input);
   }
 
-  // ২. Docker API (FIXED ✅)
+  // ২. Docker API
   const String dockerApiUrl =
       "https://linksyncro-api-2.onrender.com/get_media?url=";
 
@@ -221,19 +221,30 @@ class _HomeScreenState extends State<HomeScreen> {
     final response = await http.get(
       uri,
       headers: {
-        "x-api-key": "demo_key_123", // ✅ API KEY added
+        "x-api-key": "demo_key_123",
       },
     ).timeout(const Duration(seconds: 45));
 
+    // ✅ DEBUG PRINT
+    print("STATUS: ${response.statusCode}");
+    print("BODY: ${response.body}");
+
     if (response.statusCode == 200) {
       final data = jsonDecode(utf8.decode(response.bodyBytes));
-      if (data['status'] == 'success') return data;
+
+      if (data['status'] == 'success' && data['url'] != null) {
+        return data;
+      } else {
+        throw "API returned no valid URL";
+      }
+    } else {
+      throw "API Error: ${response.statusCode}";
     }
   } catch (e) {
-    print("Docker API Error: $e");
+    print("❌ Docker API Error: $e");
   }
 
-  // ৩. Google Script fallback (unchanged)
+  // ৩. Google Script fallback
   const String proxyUrl =
       "https://script.google.com/macros/s/AKfycbw9m2lQnhp9W1j3gjLyRSFzDWT5puV1E24F_RwNqxOjbpsuyin1NTHDcFoD3AfmKgvvEA/exec";
 
@@ -244,11 +255,14 @@ class _HomeScreenState extends State<HomeScreen> {
     final response =
         await http.get(uri).timeout(const Duration(seconds: 45));
 
+    print("GAS STATUS: ${response.statusCode}");
+    print("GAS BODY: ${response.body}");
+
     if (response.statusCode == 200) {
       return jsonDecode(utf8.decode(response.bodyBytes));
     }
   } catch (e) {
-    print("Google Script Error: $e");
+    print("❌ Google Script Error: $e");
   }
 
   throw "Server is not responding. Please try again later.";
