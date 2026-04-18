@@ -179,46 +179,38 @@ def extract_media(url: str):
 # -----------------------------
 @app.get("/get_media")
 async def get_media(url: str, request: Request):
-    # পরিবর্তন ১: এখন হেডার অথবা URL এর শেষে ?key=... দিয়েও কি চেক করা যাবে
-    key = request.headers.get("x-api-key") or request.query_params.get("key")
-    
-    if not key or key not in VALID_API_KEYS:
-        # পরিবর্তন ২: কি ভুল হলে এখন 'Received' কি-টি দেখাবে যাতে আপনি বুঝতে পারেন বানান ভুল হচ্ছে কি না
-        raise HTTPException(
-            status_code=401, 
-            detail=f"Unauthorized: Invalid API Key. Received: {key}"
-        )
-
-    # আপনার অরিজিনাল Rate Limit লজিক (ঠিক আছে)
-    now = time.time()
-    user_rates = rate_store.get(key, [])
-    user_rates = [t for t in user_rates if now - t < RATE_WINDOW]
-    rate_store[key] = user_rates
-    if len(user_rates) >= RATE_LIMIT:
-        raise HTTPException(status_code=429, detail="Rate limit exceeded")
-    rate_store[key].append(now)
-
+    """
+    API Key ছাড়াই সরাসরি ভিডিও ডাটা এক্সট্রাক্ট করার রুট।
+    """
+    # ১. ইউআরএল আছে কিনা চেক করা
     if not url:
         raise HTTPException(status_code=400, detail="URL is required")
 
-    # আপনার অরিজিনাল URL ক্লিনিং লজিক (ঠিক আছে)
+    # ২. ইউআরএল ক্লিনিং (Facebook/Instagram এর জন্য অতিরিক্ত প্যারামিটার বাদ দেওয়া)
     if "?" in url and any(x in url for x in ["facebook", "fb", "instagram"]):
         url = url.split("?")[0]
 
+    # ৩. ইউআরএল ভ্যালিডেশন
     if not is_valid_url(url):
         raise HTTPException(status_code=400, detail="Unsupported or invalid URL")
 
     try:
+        # ৪. মিডিয়া এক্সট্রাকশন (অ্যাসিঙ্ক্রোনাসলি চালানো হচ্ছে)
         loop = asyncio.get_event_loop()
         result = await loop.run_in_executor(executor, extract_media, url)
+        
         if not result:
-            # পরিবর্তন ৩: এরর মেসেজটি অ্যাপের জন্য আরও পরিষ্কার করা হলো
-            raise HTTPException(status_code=404, detail="Could not extract video. Link may be private or invalid.")
+            raise HTTPException(
+                status_code=404, 
+                detail="Could not extract video. Content may be private, invalid, or region-blocked."
+            )
+            
         return result
+
     except HTTPException as he:
         raise he
     except Exception as e:
-        logging.error(f"Critical Error: {str(e)}")
+        logging.error(f"Critical Error during extraction: {str(e)}")
         raise HTTPException(status_code=500, detail="Internal server error")
 
 # -----------------------------

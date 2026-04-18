@@ -205,17 +205,16 @@ class _HomeScreenState extends State<HomeScreen> {
     if (_igService.isInstagramLink(input)) return await _igService.getVideoDetails(input);
   } catch (e) {
     debugPrint("Local Service Error: $e");
-    // লোকাল সার্ভিস ফেইল করলে পরের স্টেপে (Docker API) যাবে
   }
 
+  // ২. আপনার Render (Docker) API - এখন কোনো API Key ছাড়াই কাজ করবে
   const String dockerApiUrl = "https://linksyncro-api-2.onrender.com/get_media?url=";
   
   try {
     final response = await http.get(
       Uri.parse("$dockerApiUrl${Uri.encodeComponent(input)}"),
+      // এখানে আমরা headers থেকে 'x-api-key' সরিয়ে দিয়েছি
       headers: {
-        // আপনার পাইথন কোডের VALID_API_KEYS থেকে একটি কি এখানে দিতেই হবে
-        "x-api-key": "demo_key_123", 
         "Accept": "application/json",
       },
     ).timeout(const Duration(seconds: 45));
@@ -225,17 +224,12 @@ class _HomeScreenState extends State<HomeScreen> {
       if (data['status'] == 'success') {
         return data;
       }
-    } else if (response.statusCode == 401) {
-      debugPrint("API Error: Unauthorized. Check your API Key.");
-    } else if (response.statusCode == 429) {
-      debugPrint("API Error: Rate limit exceeded.");
     }
   } catch (e) {
     debugPrint("Docker API Connection Error: $e");
-    // এপিআই ফেইল করলে বা টাইম-আউট হলে গুগল স্ক্রিপ্টে যাবে
   }
 
-  // ৩. সর্বশেষ ব্যাকআপ: Google Apps Script
+  // ৩. সর্বশেষ ব্যাকআপ: Google Apps Script (অপরিবর্তিত)
   const String proxyUrl = "https://script.google.com/macros/s/AKfycbw9m2lQnhp9W1j3gjLyRSFzDWT5puV1E24F_RwNqxOjbpsuyin1NTHDcFoD3AfmKgvvEA/exec";
   
   try {
@@ -244,14 +238,12 @@ class _HomeScreenState extends State<HomeScreen> {
 
     if (response.statusCode == 200) {
       final data = jsonDecode(utf8.decode(response.bodyBytes));
-      // গুগল স্ক্রিপ্টের রেসপন্স ফরম্যাট চেক করে রিটার্ন করা
       return data;
     }
   } catch (e) {
     debugPrint("Google Script Backup Error: $e");
   }
 
-  // যদি কোনোটাই কাজ না করে
   throw "সাময়িক সমস্যা! সব সার্ভার বিজি অথবা লিঙ্কটি ভুল। আবার চেষ্টা করুন।";
 }
 
