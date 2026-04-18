@@ -198,24 +198,28 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<Map<String, dynamic>> _resolveLink(String input) async {
-  // ১. আপনার লোকাল সার্ভিসগুলো চেক করা (YouTube, FB, IG)
+  // ১. আপনার লোকাল সার্ভিসগুলো চেক করা (FB, IG এর জন্য ঠিক আছে)
   try {
-    if (_ytService.isYouTubeLink(input)) return await _ytService.getVideoDetails(input);
     if (_fbService.isFacebookLink(input)) return await _fbService.getVideoDetails(input);
     if (_igService.isInstagramLink(input)) return await _igService.getVideoDetails(input);
+    
+    // ইউটিউবের জন্য সরাসরি আমাদের Docker API ব্যবহার করা ভালো কারণ সেটি নিয়মিত আপডেট হয়
+    if (_ytService.isYouTubeLink(input)) {
+       debugPrint("YouTube link detected, routing to Docker API...");
+    }
   } catch (e) {
     debugPrint("Local Service Error: $e");
   }
 
-  // ২. আপনার Render (Docker) API - এখন কোনো API Key ছাড়াই কাজ করবে
+  // ২. আপনার Render (Docker) API - এটিই এখন ইউটিউব হ্যান্ডেল করবে
   const String dockerApiUrl = "https://linksyncro-api-2.onrender.com/get_media?url=";
   
   try {
     final response = await http.get(
       Uri.parse("$dockerApiUrl${Uri.encodeComponent(input)}"),
-      // এখানে আমরা headers থেকে 'x-api-key' সরিয়ে দিয়েছি
       headers: {
         "Accept": "application/json",
+        // এখানে x-api-key আর লাগবে না কারণ আমরা পাইথন থেকে ওটা সরিয়ে দিয়েছি
       },
     ).timeout(const Duration(seconds: 45));
 
@@ -224,13 +228,15 @@ class _HomeScreenState extends State<HomeScreen> {
       if (data['status'] == 'success') {
         return data;
       }
+    } else {
+      debugPrint("Docker API Error Status: ${response.statusCode}");
     }
   } catch (e) {
     debugPrint("Docker API Connection Error: $e");
   }
 
-  // ৩. সর্বশেষ ব্যাকআপ: Google Apps Script (অপরিবর্তিত)
-  const String proxyUrl = "https://script.google.com/macros/s/AKfycbw9m2lQnhp9W1j3gjLyRSFzDWT5puV1E24F_RwNqxOjbpsuyin1NTHDcFoD3AfmKgvvEA/exec";
+  // ৩. সর্বশেষ ব্যাকআপ: Google Apps Script
+  const String proxyUrl = "https://script.google.com/macros/s/AKfycbw9m2lQnhp9W1j3gjLyRSFzDWT5puV1E24F_RwNqxOjbpsuyin1NTHDcFoD3Af:exec"; // আপনার অরিজিনাল ইউআরএল
   
   try {
     final uri = Uri.parse("$proxyUrl?url=${Uri.encodeComponent(input)}");
@@ -244,7 +250,7 @@ class _HomeScreenState extends State<HomeScreen> {
     debugPrint("Google Script Backup Error: $e");
   }
 
-  throw "সাময়িক সমস্যা! সব সার্ভার বিজি অথবা লিঙ্কটি ভুল। আবার চেষ্টা করুন।";
+  throw "সব সার্ভার বিজি অথবা লিঙ্কটি ভুল। আপনার ইন্টারনেট কানেকশন চেক করে আবার চেষ্টা করুন।";
 }
 
   Future<void> _executeDownload(DownloadTask task) async {
