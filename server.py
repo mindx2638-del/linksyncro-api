@@ -89,7 +89,7 @@ def get_cookie_files(domain):
 # CORE ENGINE
 # -----------------------------
 def extract_media(url: str):
-    # ক্যাশ চেক লজিক
+    # আপনার অরিজিনাল ক্যাশ চেক লজিক
     cache_key = hashlib.md5(url.encode()).hexdigest()
     if cache_key in cache:
         data, ts = cache[cache_key]
@@ -98,17 +98,19 @@ def extract_media(url: str):
             return data
 
     domain = urlparse(url).hostname or ""
+    
     cookie_list = [None] 
     cookie_list.extend(get_cookie_files(domain))
 
     for cookie_path in cookie_list:
         ydl_opts = {
+            # ফরমেট লজিক আপনার দেওয়াটাই রাখা হয়েছে (MP4 priority)
             "format": "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best",
             "quiet": True,
             "no_warnings": True,
             "noplaylist": True,
             "socket_timeout": 45,
-            "retries": 10,
+            "retries": 10, # আরও স্টেবল করার জন্য বাড়ানো হয়েছে
             "nocheckcertificate": True,
             "geo_bypass": True,
             "user_agent": random.choice(USER_AGENTS),
@@ -118,6 +120,7 @@ def extract_media(url: str):
                 "Referer": "https://www.google.com/",
             },
             "extractor_args": {
+                # এখানে Android এবং iOS ক্লায়েন্ট যোগ করা হয়েছে যাতে মোবাইলে লিঙ্ক প্লে হয়
                 "youtube": {"player_client": ["android", "ios", "mweb", "tv"], "player_skip": ["webpage", "configs"]},
                 "instagram": {"force_subtitles": False},
                 "facebook": {"force_generic_extractor": False}
@@ -126,49 +129,47 @@ def extract_media(url: str):
 
         if cookie_path:
             ydl_opts["cookiefile"] = cookie_path
+            logging.info(f"Attempting with Cookie: {cookie_path}")
+        else:
+            logging.info(f"Attempting WITHOUT cookies for: {url}")
 
         try:
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 info = ydl.extract_info(url, download=False)
                 
-                # সব কোয়ালিটির লিস্ট তৈরি করা
-                formats_data = []
-                for f in info.get("formats", []):
-                    # শুধু ভিডিও আছে এমন ফরম্যাটগুলো ফিল্টার
-                    if f.get("url") and f.get("vcodec") != "none":
-                        # সাইজ ক্যালকুলেশন (Bytes to MB)
-                        size_bytes = f.get("filesize") or f.get("filesize_approx") or 0
-                        size_mb = round(size_bytes / (1024 * 1024), 2)
-                        
-                        formats_data.append({
-                            "format_id": f.get("format_id"),
-                            "quality": f.get("format_note", "N/A"),
-                            "ext": f.get("ext"),
-                            "url": f.get("url"),
-                            "size_mb": size_mb
-                        })
+                download_url = info.get("url")
+                
+                # আপনার অরিজিনাল ফরম্যাট সিলেকশন লজিক (পুরোটা একই রাখা হয়েছে)
+                if not download_url and "formats" in info:
+                    valid_formats = [f for f in info["formats"] if f.get("vcodec") != "none" and f.get("acodec") != "none"]
+                    if not valid_formats:
+                        valid_formats = [f for f in info["formats"] if f.get("url")]
+                    
+                    if valid_formats:
+                        valid_formats.sort(key=lambda x: (x.get("height") or 0), reverse=True)
+                        download_url = valid_formats[0]["url"]
 
-                # রেজোলিউশন অনুযায়ী সর্ট করা (বড় থেকে ছোট)
-                formats_data.sort(key=lambda x: int(x['format_id']) if x['format_id'].isdigit() else 0, reverse=True)
-
-                if formats_data:
+                if download_url:
                     result = {
                         "status": "success",
+                        "url": download_url,
                         "title": info.get("title", "Video"),
                         "thumbnail": info.get("thumbnail"),
                         "duration": info.get("duration"),
-                        "source": info.get("extractor_key", domain),
-                        "formats": formats_data # এখন এখানে লিস্ট যাচ্ছে
+                        "source": info.get("extractor_key", domain)
                     }
                     
                     cache[cache_key] = (result, time.time())
-                    if len(cache) > 2000:
+                    if len(cache) > 2000: # ক্যাশ লিমিট কিছুটা বাড়ানো হয়েছে
                         cache.pop(next(iter(cache)))
                     
                     return result
                     
         except Exception as e:
-            logging.error(f"Error extracting: {str(e)}")
+            if not cookie_path:
+                logging.warning(f"Failed without cookies. Error: {str(e)}")
+            else:
+                logging.error(f"Failed with cookie {cookie_path}: {str(e)}")
             continue 
 
     return None

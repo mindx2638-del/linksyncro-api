@@ -150,68 +150,59 @@ class _HomeScreenState extends State<HomeScreen> {
       _showToast("Please paste a link first", isError: true);
       return;
     }
-    
-    // ১. প্রসেসিং স্টেট দেখান
-    _showToast("Fetching video details...");
-
-    try {
-      // ২. লিঙ্কের ডিটেইলস আনুন (আপনার নতুন API থেকে)
-      final result = await _resolveLink(input);
-      
-      // ৩. যদি রেজাল্টে ফরম্যাট লিস্ট থাকে, তবে কোয়ালিটি পিকার দেখান
-      if (result['formats'] != null && (result['formats'] as List).isNotEmpty) {
-        _showQualityPicker(context, result['formats'], result['title'] ?? "Video", result['thumbnail']);
-      } else {
-        // যদি পুরনো লজিক বা অন্য কিছু হয়, সরাসরি ডাউনলোড (Fallback)
-        _startDownloadProcess(result['url'], result['title'] ?? "Video", result['thumbnail']);
-      }
-      
-      _urlController.clear();
-    } catch (e) {
-      _showToast("Error: $e", isError: true);
+    if (!await _handlePermissions()) {
+      _showToast("Storage permission denied!", isError: true);
+      return;
     }
-  }
 
-
-  Future<void> _startDownloadProcess(String downloadUrl, String title, String? thumbnail) async {
     final task = DownloadTask(
       id: DateTime.now().millisecondsSinceEpoch.toString(),
-      inputUrl: downloadUrl,
-      videoTitle: title,
-      thumbnailUrl: thumbnail,
-      downloadUrl: downloadUrl,
+      inputUrl: input,
     );
 
     setState(() {
       _downloadTasks.insert(0, task);
+      _urlController.clear();
     });
 
+    _startDownloadProcess(task);
+  }
+
+  Future<void> _startDownloadProcess(DownloadTask task) async {
     try {
+      final result = await _resolveLink(task.inputUrl);
+      setState(() {
+        task.downloadUrl = result['url'];
+        task.videoTitle = result['title'] ?? "Video_${task.id}";
+        task.thumbnailUrl = result['thumbnail'];
+      });
+
+      if (task.downloadUrl == null) throw "Invalid response from server";
+
       const root = "/storage/emulated/0";
       final folder = Directory("$root/Download/LinkSyncro");
       if (!await folder.exists()) await folder.create(recursive: true);
 
-      String cleanName = title.replaceAll(RegExp(r'[<>:"/\\|?*]'), '').trim();
-      if (cleanName.length > 50) cleanName = cleanName.substring(0, 50).trim();
-      
+      // ফাইল নেম ক্লিনিং এবং লেন্থ লিমিট (Error 36 Fix)
+      String cleanName = task.videoTitle!.replaceAll(RegExp(r'[<>:"/\\|?*]'), '').trim();
+      if (cleanName.length > 50) {
+        cleanName = cleanName.substring(0, 50).trim();
+      }
+      if (cleanName.isEmpty) cleanName = "Video_${task.id}";
+
       task.savePath = "${folder.path}/$cleanName.mp4";
-      
-      // ডাউনলোড শুরু করুন
       await _executeDownload(task);
     } catch (e) {
       _handleTaskError(task, e);
     }
   }
 
-
   Future<Map<String, dynamic>> _resolveLink(String input) async {
     if (_ytService.isYouTubeLink(input)) return await _ytService.getVideoDetails(input);
     if (_fbService.isFacebookLink(input)) return await _fbService.getVideoDetails(input);
     if (_igService.isInstagramLink(input)) return await _igService.getVideoDetails(input);
 
-    // নতুন Render সার্ভার লিঙ্ক
-    const String proxyUrl = "https://linksyncro-api-2.onrender.com";
-    
+    const String proxyUrl = "https://script.google.com/macros/s/AKfycbw_6yrOz6F2umCUlCmPIOFI1xf7d3NMG5NF8gckpwrpsGPRrXVmZaV137P5W27L7nf74g/exec";
     final uri = Uri.parse("$proxyUrl?url=${Uri.encodeComponent(input)}");
 
     final response = await http.get(uri).timeout(const Duration(seconds: 45));
@@ -219,8 +210,7 @@ class _HomeScreenState extends State<HomeScreen> {
       return jsonDecode(utf8.decode(response.bodyBytes));
     }
     throw "Proxy server failed to respond";
-}
-
+  }
 
   Future<void> _executeDownload(DownloadTask task) async {
     RandomAccessFile? raf;
@@ -607,43 +597,6 @@ Widget build(BuildContext context) {
           ),
         ],
       ),
-    );
-  }
-
-  void _showQualityPicker(BuildContext context, List formats, String title, String? thumbnail) {
-    showModalBottomSheet(
-      context: context,
-      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
-      builder: (context) {
-        return Container(
-          padding: const EdgeInsets.all(16),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text("Select Quality", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-              const Divider(),
-              Expanded(
-                child: ListView.builder(
-                  shrinkWrap: true,
-                  itemCount: formats.length,
-                  itemBuilder: (context, index) {
-                    final f = formats[index];
-                    return ListTile(
-                      leading: const Icon(Icons.video_file_outlined, color: Colors.indigo),
-                      title: Text("${f['quality']} (${f['ext']})"),
-                      subtitle: Text("${f['size_mb']} MB"),
-                      onTap: () {
-                        Navigator.pop(context);
-                        _startDownloadProcess(f['url'], title, thumbnail);
-                      },
-                    );
-                  },
-                ),
-              ),
-            ],
-          ),
-        );
-      },
     );
   }
 }
