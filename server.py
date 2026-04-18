@@ -179,38 +179,40 @@ def extract_media(url: str):
 # -----------------------------
 @app.get("/get_media")
 async def get_media(url: str, request: Request):
-    """
-    API Key ছাড়াই সরাসরি ভিডিও ডাটা এক্সট্রাক্ট করার রুট।
-    """
-    # ১. ইউআরএল আছে কিনা চেক করা
+    # আপনার অরিজিনাল API Key চেক লজিক
+    key = request.headers.get("x-api-key")
+    if not key or key not in VALID_API_KEYS:
+        raise HTTPException(status_code=401, detail="Unauthorized: Invalid API Key")
+
+    # আপনার অরিজিনাল Rate Limit লজিক
+    now = time.time()
+    user_rates = rate_store.get(key, [])
+    user_rates = [t for t in user_rates if now - t < RATE_WINDOW]
+    rate_store[key] = user_rates
+    if len(user_rates) >= RATE_LIMIT:
+        raise HTTPException(status_code=429, detail="Rate limit exceeded")
+    rate_store[key].append(now)
+
     if not url:
         raise HTTPException(status_code=400, detail="URL is required")
 
-    # ২. ইউআরএল ক্লিনিং (Facebook/Instagram এর জন্য অতিরিক্ত প্যারামিটার বাদ দেওয়া)
-    if "?" in url and any(x in url for x in ["facebook", "fb", "instagram"]):
+    # আপনার অরিজিনাল URL ক্লিনিং লজিক
+    if "?" in url and ("facebook" in url or "fb" in url or "instagram" in url):
         url = url.split("?")[0]
 
-    # ৩. ইউআরএল ভ্যালিডেশন
     if not is_valid_url(url):
         raise HTTPException(status_code=400, detail="Unsupported or invalid URL")
 
     try:
-        # ৪. মিডিয়া এক্সট্রাকশন (অ্যাসিঙ্ক্রোনাসলি চালানো হচ্ছে)
         loop = asyncio.get_event_loop()
         result = await loop.run_in_executor(executor, extract_media, url)
-        
         if not result:
-            raise HTTPException(
-                status_code=404, 
-                detail="Could not extract video. Content may be private, invalid, or region-blocked."
-            )
-            
+            raise HTTPException(status_code=404, detail="Could not extract video. Content may be private or IP blocked.")
         return result
-
     except HTTPException as he:
         raise he
     except Exception as e:
-        logging.error(f"Critical Error during extraction: {str(e)}")
+        logging.error(f"Critical Error: {str(e)}")
         raise HTTPException(status_code=500, detail="Internal server error")
 
 # -----------------------------
