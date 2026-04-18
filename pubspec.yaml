@@ -26,6 +26,7 @@ dependencies:
   volume_controller: ^2.0.3  
   audio_service: ^0.18.12
   just_audio: ^0.9.36
+  flutter_inappwebview: ^6.1.4
 
 flutter:
   uses-material-design: true
