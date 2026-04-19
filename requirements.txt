@@ -5,3 +5,4 @@ yt-dlp>=2025.01.15
 httpcore
 httpx
 requests
+python-multipart

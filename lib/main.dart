@@ -169,33 +169,87 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<void> _startDownloadProcess(DownloadTask task) async {
-    try {
-      final result = await _resolveLink(task.inputUrl);
-      setState(() {
-        task.downloadUrl = result['url'];
-        task.videoTitle = result['title'] ?? "Video_${task.id}";
-        task.thumbnailUrl = result['thumbnail'];
-      });
-
-      if (task.downloadUrl == null) throw "Invalid response from server";
-
-      const root = "/storage/emulated/0";
-      final folder = Directory("$root/Download/LinkSyncro");
-      if (!await folder.exists()) await folder.create(recursive: true);
-
-      // ফাইল নেম ক্লিনিং এবং লেন্থ লিমিট (Error 36 Fix)
-      String cleanName = task.videoTitle!.replaceAll(RegExp(r'[<>:"/\\|?*]'), '').trim();
-      if (cleanName.length > 50) {
-        cleanName = cleanName.substring(0, 50).trim();
-      }
-      if (cleanName.isEmpty) cleanName = "Video_${task.id}";
-
-      task.savePath = "${folder.path}/$cleanName.mp4";
-      await _executeDownload(task);
-    } catch (e) {
-      _handleTaskError(task, e);
+  try {
+    setState(() => task.statusText = "Analyzing...");
+    
+    // ১. সার্ভার থেকে ডাটা আনুন
+    final result = await _resolveLink(task.inputUrl);
+    
+    // ২. চেক করুন ফরম্যাট লিস্ট আছে কি না (যদি আপনার ব্যাকএন্ড থেকে লিস্ট আসে)
+    if (result.containsKey('formats') && result['formats'] is List) {
+      // যদি ফরম্যাট লিস্ট থাকে, তবে কোয়ালিটি সিলেকশন দেখান
+      _showQualitySelection(result['formats'], task, result['title'], result['thumbnail']);
+    } else {
+      // যদি ফরম্যাট লিস্ট না থাকে, পুরনো পদ্ধতিতে ডাউনলোড শুরু করুন
+      task.downloadUrl = result['url'];
+      task.videoTitle = result['title'] ?? "Video_${task.id}";
+      task.thumbnailUrl = result['thumbnail'];
+      await _prepareDownload(task);
     }
+  } catch (e) {
+    _handleTaskError(task, e);
   }
+}
+
+  Future<void> _prepareDownload(DownloadTask task) async {
+  try {
+    const root = "/storage/emulated/0";
+    final folder = Directory("$root/Download/LinkSyncro");
+    if (!await folder.exists()) await folder.create(recursive: true);
+
+    String cleanName = task.videoTitle!.replaceAll(RegExp(r'[<>:"/\\|?*]'), '').trim();
+    if (cleanName.length > 50) cleanName = cleanName.substring(0, 50).trim();
+    if (cleanName.isEmpty) cleanName = "Video_${task.id}";
+
+    task.savePath = "${folder.path}/$cleanName.mp4";
+    
+    // ডাউনলোড শুরু করুন
+    await _executeDownload(task);
+  } catch (e) {
+    _handleTaskError(task, e);
+  }
+}
+
+void _showQualitySelection(List<dynamic> formats, DownloadTask task, String? title, String? thumbnail) {
+  task.videoTitle = title ?? "Video_${task.id}";
+  task.thumbnailUrl = thumbnail;
+
+  showModalBottomSheet(
+    context: context,
+    backgroundColor: Theme.of(context).scaffoldBackgroundColor,
+    shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+    builder: (context) {
+      return Container(
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Text("Select Video Quality", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+            const SizedBox(height: 10),
+            ListView.builder(
+              shrinkWrap: true,
+              itemCount: formats.length,
+              itemBuilder: (context, index) {
+                final fmt = formats[index];
+                return ListTile(
+                  leading: const Icon(Icons.video_library, color: Colors.indigo),
+                  title: Text(fmt['resolution'] ?? "Unknown Quality"),
+                  trailing: const Icon(Icons.download_for_offline),
+                  onTap: () {
+                    Navigator.pop(context); // পপ-আপ বন্ধ
+                    task.downloadUrl = fmt['url']; // সিলেক্ট করা URL বসান
+                    _prepareDownload(task); // ডাউনলোড শুরু করুন
+                  },
+                );
+              },
+            ),
+          ],
+        ),
+      );
+    },
+  );
+}
+
 
   Future<Map<String, dynamic>> _resolveLink(String input) async {
     if (_ytService.isYouTubeLink(input)) return await _ytService.getVideoDetails(input);
