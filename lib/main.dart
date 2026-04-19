@@ -8,11 +8,6 @@ import 'package:dio/dio.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:media_scanner/media_scanner.dart';
 
-// আপনার লোকাল সার্ভিস ফাইলগুলো নিশ্চিত করুন প্রোজেক্টে আছে
-import 'youtube_service.dart';
-import 'facebook_service.dart';
-import 'instagram_service.dart';
-
 import 'package:photo_manager/photo_manager.dart';
 import 'video_gallery_page.dart'; // আপনার তৈরি করা ফাইল
 import 'video_player_page.dart';  // আপনার তৈরি করা ফাইল
@@ -109,6 +104,7 @@ class _HomeScreenState extends State<HomeScreen> {
   void initState() {
     super.initState();
     _checkPermission();
+    _keepServerAlive(); 
   }
 
   Future<void> _checkPermission() async {
@@ -116,11 +112,12 @@ class _HomeScreenState extends State<HomeScreen> {
       await Permission.notification.request();
     }
   }
+
   final TextEditingController _urlController = TextEditingController();
   final List<DownloadTask> _downloadTasks = [];
-  final YouTubeService _ytService = YouTubeService();
-  final FacebookService _fbService = FacebookService();
-  final InstagramService _igService = InstagramService();
+  
+  // পুরনো সার্ভিসগুলো সরিয়ে এখানে নতুন ApiService যুক্ত করলাম
+  final ApiService _apiService = ApiService();
   
   final Dio _dio = Dio(BaseOptions(
     connectTimeout: const Duration(seconds: 30),
@@ -252,19 +249,19 @@ void _showQualitySelection(List<dynamic> formats, DownloadTask task, String? tit
 
 
   Future<Map<String, dynamic>> _resolveLink(String input) async {
-    if (_ytService.isYouTubeLink(input)) return await _ytService.getVideoDetails(input);
-    if (_fbService.isFacebookLink(input)) return await _fbService.getVideoDetails(input);
-    if (_igService.isInstagramLink(input)) return await _igService.getVideoDetails(input);
-
-    const String proxyUrl = "https://script.google.com/macros/s/AKfycbw_6yrOz6F2umCUlCmPIOFI1xf7d3NMG5NF8gckpwrpsGPRrXVmZaV137P5W27L7nf74g/exec";
-    final uri = Uri.parse("$proxyUrl?url=${Uri.encodeComponent(input)}");
-
-    final response = await http.get(uri).timeout(const Duration(seconds: 45));
-    if (response.statusCode == 200) {
-      return jsonDecode(utf8.decode(response.bodyBytes));
-    }
-    throw "Proxy server failed to respond";
+  try {
+    // এখন আর কোনো সার্ভিস চেক করতে হবে না, সরাসরি পাইথন ব্যাকএন্ডে কল যাবে
+    return await _apiService.fetchMediaDetails(input);
+  } catch (e) {
+    // যদি ব্যাকএন্ড থেকে কোনো এরর আসে
+    throw "Server Error: ${e.toString()}";
   }
+}
+
+void _keepServerAlive() {
+  const String proxyUrl = "https://script.google.com/macros/s/AKfycbw_6yrOz6F2umCUlCmPIOFI1xf7d3NMG5NF8gckpwrpsGPRrXVmZaV137P5W27L7nf74g/exec";
+  http.get(Uri.parse(proxyUrl)).catchError((e) => print("Ping failed: $e"));
+}
 
   Future<void> _executeDownload(DownloadTask task) async {
     RandomAccessFile? raf;
