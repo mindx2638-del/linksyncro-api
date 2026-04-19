@@ -3,13 +3,13 @@ import 'package:http/http.dart' as http;
 import 'dart:async';
 
 class FacebookService {
-  // API Endpoint
+  // API Endpoint (Ensure this matches your FastAPI '/get_media' route)
   static const String _apiUrl = "https://linksyncro-api-1.onrender.com/get_media";
   
-  // API Key
+  // API Key (Must match the key defined in your FastAPI backend)
   static const String _apiKey = "demo_key_123"; 
 
-  // Logic to identify various Facebook URL formats
+  // Logic to identify various Facebook URL formats (Regular, Watch, FB.com)
   bool isFacebookLink(String url) {
     String lowerUrl = url.toLowerCase();
     return lowerUrl.contains("facebook.com") || 
@@ -17,28 +17,26 @@ class FacebookService {
            lowerUrl.contains("fb.com");
   }
 
-  // রিটার্ন টাইপ dynamic করা হয়েছে যাতে List (formats) হ্যান্ডেল করা যায়
-  Future<Map<String, dynamic>> getVideoDetails(String url) async {
+  Future<Map<String, String>> getVideoDetails(String url) async {
     try {
-      // 1. URL Cleaning
+      // 1. URL Cleaning: Trim whitespace to ensure valid encoding
       String targetUrl = url.trim();
 
-      // 2. API Call
+      // 2. API Call with API Key in Headers
       final response = await http.get(
         Uri.parse("$_apiUrl?url=${Uri.encodeComponent(targetUrl)}"),
         headers: {
           "x-api-key": _apiKey,
           "Accept": "application/json",
         },
-      ).timeout(const Duration(seconds: 45));
+      ).timeout(const Duration(seconds: 45)); // Increased timeout for server processing
 
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
         
         if (data['status'] == 'success') {
-          // ফরম্যাট লিস্ট রিটার্ন করা হচ্ছে
           return {
-            'formats': data['formats'] ?? [], 
+            'url': data['url']?.toString() ?? "",
             'title': data['title']?.toString() ?? "FB_Video_${DateTime.now().millisecondsSinceEpoch}",
             'thumbnail': data['thumbnail']?.toString() ?? "", 
             'source': data['source']?.toString() ?? "Facebook",
@@ -55,9 +53,12 @@ class FacebookService {
         throw errorData['detail'] ?? "Server Error: ${response.statusCode}";
       }
     } catch (e) {
+      // User-friendly error handling
       if (e is TimeoutException) {
         throw "Connection timed out. Please try again.";
       }
+      
+      // Generic error fallback
       throw "Could not retrieve Facebook video. Please ensure the link is public.";
     }
   }
