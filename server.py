@@ -89,7 +89,7 @@ def get_cookie_files(domain):
 # CORE ENGINE
 # -----------------------------
 def extract_media(url: str):
-    # আপনার অরিজিনাল ক্যাশ চেক লজিক (অপরিবর্তিত)
+    # ক্যাশ চেক লজিক
     cache_key = hashlib.md5(url.encode()).hexdigest()
     if cache_key in cache:
         data, ts = cache[cache_key]
@@ -102,8 +102,8 @@ def extract_media(url: str):
     cookie_list.extend(get_cookie_files(domain))
 
     for cookie_path in cookie_list:
+        # এখানে 'format' কী-টি সরিয়ে দেওয়া হয়েছে যাতে সব ফরম্যাট পাওয়া যায়
         ydl_opts = {
-            "format": "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best",
             "quiet": True,
             "no_warnings": True,
             "noplaylist": True,
@@ -125,39 +125,34 @@ def extract_media(url: str):
         }
         if cookie_path: ydl_opts["cookiefile"] = cookie_path
         
-        logging.info(f"Attempting with Cookie: {cookie_path}" if cookie_path else f"Attempting WITHOUT cookies for: {url}")
-
         try:
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 info = ydl.extract_info(url, download=False)
+                
+                # ফরম্যাট লিস্ট তৈরি
+                formats_list = []
+                if "formats" in info:
+                    seen_resolutions = set() # ডুপ্লিকেট রোধ করার জন্য
+                    for f in info["formats"]:
+                        # যেসব ফরম্যাটে ভিডিও ও অডিও দুটোই আছে (Progressive streams)
+                        if f.get("vcodec") != "none" and f.get("acodec") != "none" and f.get("url"):
+                            height = f.get("height")
+                            if height and height not in seen_resolutions:
+                                formats_list.append({
+                                    "label": f"{height}p",
+                                    "url": f.get("url")
+                                })
+                                seen_resolutions.add(height)
+                    
+                    # বড় রেজল্যুশন থেকে ছোট রেজল্যুশন সাজানো (1080p -> 720p -> 360p)
+                    formats_list.sort(key=lambda x: int(x['label'].replace('p', '')), reverse=True)
+
+                # ডিফল্ট লিঙ্ক (যদি ফরম্যাট না থাকে)
                 download_url = info.get("url")
+                if not download_url and formats_list:
+                    download_url = formats_list[0]["url"]
 
-                # আপনার অরিজিনাল ফরম্যাট সিলেকশন লজিক (অপরিবর্তিত)
-                if not download_url and "formats" in info:
-                    valid_formats = [f for f in info["formats"] if f.get("vcodec") != "none" and f.get("acodec") != "none"]
-                    if not valid_formats:
-                        valid_formats = [f for f in info["formats"] if f.get("url")]
-                    if valid_formats:
-                        valid_formats.sort(key=lambda x: (x.get("height") or 0), reverse=True)
-                        download_url = valid_formats[0]["url"]
-
-                if download_url:
-                    # নতুন লজিক: কোয়ালিটি সিলেকশনের জন্য লিস্ট তৈরি
-                    formats_list = []
-                    if "formats" in info:
-                        for f in info["formats"]:
-                            # নিশ্চিত করছি ভিডিও+অডিও ফাইলই আসছে
-                            if f.get("vcodec") != "none" and f.get("acodec") != "none":
-                                height = f.get("height")
-                                if height:
-                                    formats_list.append({
-                                        "label": f"{height}p",
-                                        "url": f.get("url")
-                                    })
-                        # রেজল্যুশন অনুযায়ী সাজানো
-                        formats_list.sort(key=lambda x: int(x['label'].replace('p', '')), reverse=True)
-
-                    # আপনার অরিজিনাল রেজাল্ট ডিকশনারি + নতুন ফরম্যাট লিস্ট
+                if download_url or formats_list:
                     result = {
                         "status": "success",
                         "url": download_url,
@@ -165,7 +160,7 @@ def extract_media(url: str):
                         "thumbnail": info.get("thumbnail"),
                         "duration": info.get("duration"),
                         "source": info.get("extractor_key", domain),
-                        "formats": formats_list  # আপনার কোয়ালিটি সিলেক্ট করার ডাটা
+                        "formats": formats_list
                     }
                     
                     cache[cache_key] = (result, time.time())
@@ -174,10 +169,7 @@ def extract_media(url: str):
                     return result
                     
         except Exception as e:
-            if not cookie_path:
-                logging.warning(f"Failed without cookies. Error: {str(e)}")
-            else:
-                logging.error(f"Failed with cookie {cookie_path}: {str(e)}")
+            logging.error(f"Error extracting {url}: {str(e)}")
             continue
             
     return None

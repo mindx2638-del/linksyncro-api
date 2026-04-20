@@ -172,32 +172,45 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Future<void> _startDownloadProcess(DownloadTask task) async {
   try {
-    // আগের লজিক: লিংক রিজল্ভ করা
+    setState(() => task.statusText = "Resolving link...");
+    
+    // ১. লিংক রিজল্ভ করা
     final result = await _resolveLink(task.inputUrl);
 
-    // -- নতুন লজিক: কোয়ালিটি চেক --
-    if (result.containsKey('formats') && result['formats'] != null) {
+    // ডিবাগ করার জন্য প্রিন্ট করুন, দেখুন কনসোলে ঠিক কী আসছে
+    print("API Response Debug: $result");
+
+    // ২. শক্তিশালী চেক (Formats আছে কি না এবং খালি কি না)
+    bool hasFormats = result.containsKey('formats') && 
+                      result['formats'] != null && 
+                      (result['formats'] as List).isNotEmpty;
+
+    if (hasFormats) {
       setState(() {
         task.availableQualities = List<Map<String, dynamic>>.from(result['formats']);
         task.videoTitle = result['title'] ?? "Video_${task.id}";
         task.thumbnailUrl = result['thumbnail'];
       });
+      
       // সিলেকশন পপআপ দেখান
       _showQualitySelectionSheet(task); 
-      return; // এখানে থামিয়ে দিলাম, ইউজার সিলেক্ট করলে তবেই ডাউনলোড হবে
+      return; 
     }
 
-    // -- আগের লজিক: যদি ফরম্যাট না থাকে তবে সরাসরি সেট করা --
-    setState(() {
-      task.downloadUrl = result['url'];
-      task.videoTitle = result['title'] ?? "Video_${task.id}";
-      task.thumbnailUrl = result['thumbnail'];
-    });
-
-    if (task.downloadUrl == null) throw "Invalid response from server";
-
-    // আগের লজিক অনুযায়ী ডাউনলোড চালিয়ে যান
-    await _proceedToDownload(task);
+    // ৩. যদি ফরম্যাট না থাকে, তবে সরাসরি URL চেক করা
+    if (result.containsKey('url') && result['url'] != null) {
+      setState(() {
+        task.downloadUrl = result['url'];
+        task.videoTitle = result['title'] ?? "Video_${task.id}";
+        task.thumbnailUrl = result['thumbnail'];
+      });
+      
+      // সরাসরি ডাউনলোড চালিয়ে যান
+      await _proceedToDownload(task);
+    } else {
+      // যদি ফরম্যাটও নেই, URL-ও নেই
+      throw "Invalid response: No formats or URL found.";
+    }
 
   } catch (e) {
     _handleTaskError(task, e);
@@ -668,6 +681,24 @@ Future<void> _prepareAndExecuteDownload(DownloadTask task) async {
   task.savePath = "${folder.path}/$cleanName.mp4";
   
   await _executeDownload(task); // আপনার আগের ডাউনলোড লজিক কল হবে
+}
+
+
+Future<void> _proceedToDownload(DownloadTask task) async {
+  // নিরাপত্তা চেক: ইউআরএল নাল বা খালি কিনা
+  if (task.downloadUrl == null || task.downloadUrl!.isEmpty) {
+    _handleTaskError(task, "Download URL missing");
+    return;
+  }
+  
+  // ইউজারকে জানানোর জন্য স্ট্যাটাস আপডেট করা
+  setState(() {
+    task.statusText = "Preparing...";
+    task.isProcessing = true;
+  });
+  
+  // আপনার আসল ডাউনলোড মেথড কল করা
+  await _prepareAndExecuteDownload(task);
 }
 
 }
