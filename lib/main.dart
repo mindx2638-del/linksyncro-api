@@ -145,28 +145,95 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   void _addNewDownload() async {
-    final input = _urlController.text.trim();
-    if (input.isEmpty) {
-      _showToast("Please paste a link first", isError: true);
-      return;
-    }
-    if (!await _handlePermissions()) {
-      _showToast("Storage permission denied!", isError: true);
-      return;
-    }
-
-    final task = DownloadTask(
-      id: DateTime.now().millisecondsSinceEpoch.toString(),
-      inputUrl: input,
-    );
-
-    setState(() {
-      _downloadTasks.insert(0, task);
-      _urlController.clear();
-    });
-
-    _startDownloadProcess(task);
+  final input = _urlController.text.trim();
+  if (input.isEmpty) {
+    _showToast("Please paste a link first", isError: true);
+    return;
   }
+  if (!await _handlePermissions()) {
+    _showToast("Storage permission denied!", isError: true);
+    return;
+  }
+
+  // লোডিং ইন্ডিকেটর দেখাতে পারেন
+  _showToast("Fetching video details...");
+
+  try {
+    // ১. ভিডিওর মেটাডেটা আনুন (আপনার _resolveLink ফাংশনটি এখন JSON রিটার্ন করবে যাতে 'formats' থাকবে)
+    final result = await _resolveLink(input);
+
+    // ২. যদি ফরম্যাট লিস্ট থাকে, তাহলে ডায়ালগ দেখান
+    if (result.containsKey('formats')) {
+      _showQualitySelection(result);
+    } else {
+      // যদি ফরম্যাট লিস্ট না থাকে, পুরনো পদ্ধতিতে ডাউনলোড শুরু করুন
+      final task = DownloadTask(
+        id: DateTime.now().millisecondsSinceEpoch.toString(),
+        inputUrl: input,
+      );
+      setState(() => _downloadTasks.insert(0, task));
+      _startDownloadProcess(task);
+    }
+  } catch (e) {
+    _handleTaskError(DownloadTask(id: "err", inputUrl: ""), e);
+  }
+}
+
+void _showQualitySelection(Map<String, dynamic> data) {
+  List formats = data['formats'] ?? [];
+  
+  showModalBottomSheet(
+    context: context,
+    builder: (context) {
+      return Container(
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Text("Select Quality", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+            const SizedBox(height: 10),
+            Expanded(
+              child: ListView.builder(
+                shrinkWrap: true,
+                itemCount: formats.length,
+                itemBuilder: (context, index) {
+                  var f = formats[index];
+                  return ListTile(
+                    title: Text("${f['resolution']} (${f['filesize']})"),
+                    trailing: const Icon(Icons.download_rounded),
+                    onTap: () {
+                      Navigator.pop(context);
+                      // ইউজার ক্লিক করলে নির্দিষ্ট ফরম্যাটটি ডাউনলোড শুরু হবে
+                      _startSelectedDownload(data, f);
+                    },
+                  );
+                },
+              ),
+            ),
+          ],
+        ),
+      );
+    },
+  );
+}
+
+Future<void> _startSelectedDownload(Map<String, dynamic> data, Map<String, dynamic> format) async {
+  final task = DownloadTask(
+    id: DateTime.now().millisecondsSinceEpoch.toString(),
+    inputUrl: data['url'] ?? "",
+    videoTitle: data['title'] ?? "Video",
+    thumbnailUrl: data['thumbnail'],
+    downloadUrl: format['url'], // এখানে ইউজারের সিলেক্ট করা URL টি বসছে
+  );
+
+  setState(() {
+    _downloadTasks.insert(0, task);
+    _urlController.clear();
+  });
+
+  // এখন ডাউনলোড শুরু করুন
+  await _executeDownload(task);
+}
 
   Future<void> _startDownloadProcess(DownloadTask task) async {
     try {
