@@ -89,7 +89,10 @@ def get_cookie_files(domain):
 # CORE ENGINE
 # -----------------------------
 def extract_media(url: str):
-    # আপনার অরিজিনাল ক্যাশ চেক লজিক
+
+    # -----------------------------
+    # CACHE CHECK (UNCHANGED)
+    # -----------------------------
     cache_key = hashlib.md5(url.encode()).hexdigest()
     if cache_key in cache:
         data, ts = cache[cache_key]
@@ -98,19 +101,19 @@ def extract_media(url: str):
             return data
 
     domain = urlparse(url).hostname or ""
-    
-    cookie_list = [None] 
+
+    cookie_list = [None]
     cookie_list.extend(get_cookie_files(domain))
 
     for cookie_path in cookie_list:
+
         ydl_opts = {
-            # ফরমেট লজিক আপনার দেওয়াটাই রাখা হয়েছে (MP4 priority)
             "format": "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best",
             "quiet": True,
             "no_warnings": True,
             "noplaylist": True,
             "socket_timeout": 45,
-            "retries": 10, # আরও স্টেবল করার জন্য বাড়ানো হয়েছে
+            "retries": 10,
             "nocheckcertificate": True,
             "geo_bypass": True,
             "user_agent": random.choice(USER_AGENTS),
@@ -120,8 +123,10 @@ def extract_media(url: str):
                 "Referer": "https://www.google.com/",
             },
             "extractor_args": {
-                # এখানে Android এবং iOS ক্লায়েন্ট যোগ করা হয়েছে যাতে মোবাইলে লিঙ্ক প্লে হয়
-                "youtube": {"player_client": ["android", "ios", "mweb", "tv"], "player_skip": ["webpage", "configs"]},
+                "youtube": {
+                    "player_client": ["android", "ios", "mweb", "tv"],
+                    "player_skip": ["webpage", "configs"]
+                },
                 "instagram": {"force_subtitles": False},
                 "facebook": {"force_generic_extractor": False}
             }
@@ -136,43 +141,96 @@ def extract_media(url: str):
         try:
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 info = ydl.extract_info(url, download=False)
-                
+
                 download_url = info.get("url")
-                
-                # আপনার অরিজিনাল ফরম্যাট সিলেকশন লজিক (পুরোটা একই রাখা হয়েছে)
+
+                # -----------------------------
+                # FALLBACK LOGIC (SAFE)
+                # -----------------------------
                 if not download_url and "formats" in info:
-                    valid_formats = [f for f in info["formats"] if f.get("vcodec") != "none" and f.get("acodec") != "none"]
+                    valid_formats = [
+                        f for f in info["formats"]
+                        if f.get("url") and f.get("vcodec") != "none"
+                    ]
+
                     if not valid_formats:
-                        valid_formats = [f for f in info["formats"] if f.get("url")]
-                    
+                        valid_formats = [
+                            f for f in info["formats"]
+                            if f.get("url")
+                        ]
+
                     if valid_formats:
-                        valid_formats.sort(key=lambda x: (x.get("height") or 0), reverse=True)
+                        valid_formats.sort(
+                            key=lambda x: (x.get("height") or 0),
+                            reverse=True
+                        )
                         download_url = valid_formats[0]["url"]
 
+                # -----------------------------
+                # QUALITY LIST (FIXED + SAFE)
+                # -----------------------------
+                quality_map = {}
+
+                if "formats" in info:
+
+                    for f in info["formats"]:
+                        url_f = f.get("url")
+                        height = f.get("height")
+
+                        # skip invalid / audio only
+                        if not url_f or not height:
+                            continue
+                        if f.get("vcodec") == "none":
+                            continue
+
+                        try:
+                            h = int(height)
+                        except:
+                            continue
+
+                        # avoid duplicates
+                        if h in quality_map:
+                            continue
+
+                        quality_map[h] = {
+                            "quality": f"{h}p",
+                            "height": h,
+                            "url": url_f,
+                            "ext": f.get("ext", "mp4"),
+                            "filesize": f.get("filesize") or 0
+                        }
+
+                quality_list = list(quality_map.values())
+                quality_list.sort(key=lambda x: x["height"], reverse=True)
+
+                # -----------------------------
+                # RESULT
+                # -----------------------------
                 if download_url:
+
                     result = {
                         "status": "success",
                         "url": download_url,
                         "title": info.get("title", "Video"),
                         "thumbnail": info.get("thumbnail"),
                         "duration": info.get("duration"),
-                        "source": info.get("extractor_key", domain)
+                        "source": info.get("extractor_key", domain),
+                        "formats": quality_list
                     }
-                    
+
                     cache[cache_key] = (result, time.time())
-                    if len(cache) > 2000: # ক্যাশ লিমিট কিছুটা বাড়ানো হয়েছে
+
+                    if len(cache) > 2000:
                         cache.pop(next(iter(cache)))
-                    
+
                     return result
-                    
+
         except Exception as e:
-            if not cookie_path:
-                logging.warning(f"Failed without cookies. Error: {str(e)}")
-            else:
-                logging.error(f"Failed with cookie {cookie_path}: {str(e)}")
-            continue 
+            logging.error(f"Error: {str(e)}")
+            continue
 
     return None
+
 
 # -----------------------------
 # ROUTES

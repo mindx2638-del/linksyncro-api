@@ -169,33 +169,81 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<void> _startDownloadProcess(DownloadTask task) async {
-    try {
-      final result = await _resolveLink(task.inputUrl);
-      setState(() {
-        task.downloadUrl = result['url'];
-        task.videoTitle = result['title'] ?? "Video_${task.id}";
-        task.thumbnailUrl = result['thumbnail'];
-      });
+  try {
+    final result = await _resolveLink(task.inputUrl);
 
-      if (task.downloadUrl == null) throw "Invalid response from server";
+    // 🔥 Quality list (server থেকে আসবে)
+    List<dynamic> qualities = result['qualities'] ?? [];
 
-      const root = "/storage/emulated/0";
-      final folder = Directory("$root/Download/LinkSyncro");
-      if (!await folder.exists()) await folder.create(recursive: true);
+    if (qualities.isNotEmpty) {
+      final selectedQuality = await _showQualityDialog(qualities);
 
-      // ফাইল নেম ক্লিনিং এবং লেন্থ লিমিট (Error 36 Fix)
-      String cleanName = task.videoTitle!.replaceAll(RegExp(r'[<>:"/\\|?*]'), '').trim();
-      if (cleanName.length > 50) {
-        cleanName = cleanName.substring(0, 50).trim();
-      }
-      if (cleanName.isEmpty) cleanName = "Video_${task.id}";
+      if (selectedQuality == null) return; // user cancel করলে stop
 
-      task.savePath = "${folder.path}/$cleanName.mp4";
-      await _executeDownload(task);
-    } catch (e) {
-      _handleTaskError(task, e);
+      // 🔥 selected quality অনুযায়ী url
+      task.downloadUrl = result['quality_urls'][selectedQuality];
+    } else {
+      task.downloadUrl = result['url'];
     }
+
+    setState(() {
+      task.videoTitle = result['title'] ?? "Video_${task.id}";
+      task.thumbnailUrl = result['thumbnail'];
+    });
+
+    if (task.downloadUrl == null) throw "Invalid response from server";
+
+    const root = "/storage/emulated/0";
+    final folder = Directory("$root/Download/LinkSyncro");
+    if (!await folder.exists()) await folder.create(recursive: true);
+
+    String cleanName =
+        task.videoTitle!.replaceAll(RegExp(r'[<>:"/\\|?*]'), '').trim();
+
+    if (cleanName.length > 50) {
+      cleanName = cleanName.substring(0, 50).trim();
+    }
+
+    if (cleanName.isEmpty) cleanName = "Video_${task.id}";
+
+    task.savePath = "${folder.path}/$cleanName.mp4";
+
+    await _executeDownload(task);
+  } catch (e) {
+    _handleTaskError(task, e);
   }
+}
+
+Future<String?> _showQualityDialog(List qualities) async {
+  return showDialog<String>(
+    context: context,
+    builder: (context) {
+      return AlertDialog(
+        title: const Text("Select Quality"),
+        content: SizedBox(
+          width: double.maxFinite,
+          child: ListView.builder(
+            shrinkWrap: true,
+            itemCount: qualities.length,
+            itemBuilder: (context, index) {
+              final q = qualities[index];
+
+              return Card(
+                child: ListTile(
+                  leading: const Icon(Icons.hd),
+                  title: Text("${q}p"),
+                  onTap: () {
+                    Navigator.pop(context, q.toString());
+                  },
+                ),
+              );
+            },
+          ),
+        ),
+      );
+    },
+  );
+}
 
   Future<Map<String, dynamic>> _resolveLink(String input) async {
     if (_ytService.isYouTubeLink(input)) return await _ytService.getVideoDetails(input);
