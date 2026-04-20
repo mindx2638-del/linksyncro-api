@@ -89,6 +89,7 @@ def get_cookie_files(domain):
 # CORE ENGINE
 # -----------------------------
 def extract_media(url: str):
+    # ক্যাশ চেক (অপরিবর্তিত)
     cache_key = hashlib.md5(url.encode()).hexdigest()
     if cache_key in cache:
         data, ts = cache[cache_key]
@@ -96,11 +97,12 @@ def extract_media(url: str):
             return data
 
     domain = urlparse(url).hostname or ""
-    cookie_list = [None]
+    cookie_list = [None] 
     cookie_list.extend(get_cookie_files(domain))
 
     for cookie_path in cookie_list:
         ydl_opts = {
+            # "format" লাইনটি এখান থেকে সরিয়ে দিন, নাহলে yt-dlp সব কোয়ালিটি দিবে না
             "quiet": True,
             "no_warnings": True,
             "noplaylist": True,
@@ -109,13 +111,10 @@ def extract_media(url: str):
             "nocheckcertificate": True,
             "geo_bypass": True,
             "user_agent": random.choice(USER_AGENTS),
-            "http_headers": {
-                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
-                "Accept-Language": "en-US,en;q=0.5",
-                "Referer": "https://www.google.com/",
-            },
             "extractor_args": {
                 "youtube": {"player_client": ["android", "ios", "mweb", "tv"], "player_skip": ["webpage", "configs"]},
+                "instagram": {"force_subtitles": False},
+                "facebook": {"force_generic_extractor": False}
             }
         }
 
@@ -126,40 +125,41 @@ def extract_media(url: str):
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 info = ydl.extract_info(url, download=False)
                 
-                formats_list = []
-                # সব ফরম্যাটগুলো ফিল্টার করছি
-                if "formats" in info:
-                    for f in info["formats"]:
-                        # শুধু ভিডিও এবং অডিও আছে এমন ফরম্যাটগুলো নেব (progressive)
-                        # অথবা যদি FFmpeg দিয়ে মার্জ করতে চান, তবে vcodec/acodec চেক করবেন
-                        if f.get("vcodec") != "none" and f.get("acodec") != "none" and f.get("url"):
-                            
-                            # ফাইল সাইজ হিসাব করা
-                            size = f.get("filesize") or f.get("filesize_approx") or 0
-                            size_mb = f"{round(size / (1024 * 1024), 1)} MB" if size > 0 else "N/A"
-                            
-                            resolution = f.get("resolution") or f"{f.get('height')}p"
-                            
-                            formats_list.append({
-                                "id": f.get("format_id"),
-                                "resolution": resolution,
-                                "filesize": size_mb,
-                                "url": f.get("url"),
-                                "ext": f.get("ext")
-                            })
+                # এখানে সব ফরম্যাট সংগ্রহ করা হচ্ছে
+                available_formats = []
+                raw_formats = info.get("formats", [])
+                
+                # ভিডিও এবং অডিও আছে এমন ফরম্যাটগুলো ফিল্টার করছি
+                for f in raw_formats:
+                    # আমরা শুধু ভিডিও এবং অডিও যুক্ত ফাইল চাচ্ছি (যাতে সরাসরি প্লে হয়)
+                    if f.get("vcodec") != "none" and f.get("acodec") != "none" and f.get("resolution"):
+                        available_formats.append({
+                            "resolution": f.get("resolution"),
+                            "url": f.get("url")
+                        })
+                
+                # রেজোলিউশন অনুযায়ী সাজানো (বড় থেকে ছোট)
+                if available_formats:
+                    available_formats.sort(key=lambda x: int(x['resolution'].replace('p', '').split('x')[-1] if 'x' in x['resolution'] else x['resolution'].replace('p', '')), reverse=True)
+                
+                # যদি কোনো ফরম্যাট না পায়, তাহলে অরিজিনাল লিঙ্ক ট্রাই করা
+                if not available_formats and info.get("url"):
+                    available_formats.append({"resolution": "Best Available", "url": info.get("url")})
 
-                # রেজোলিউশন অনুযায়ী বড় থেকে ছোট সাজানো
-                formats_list.sort(key=lambda x: int(str(x['resolution']).replace('p', '').split('x')[-1]), reverse=True)
-
-                if formats_list:
+                if available_formats:
                     result = {
                         "status": "success",
                         "title": info.get("title", "Video"),
                         "thumbnail": info.get("thumbnail"),
-                        "formats": formats_list # এখানে পুরো ফরম্যাট লিস্টটি পাঠাচ্ছি
+                        "duration": info.get("duration"),
+                        "formats": available_formats, # অ্যাপ এখন এখান থেকে লিস্ট পাবে
+                        "source": info.get("extractor_key", domain)
                     }
                     
                     cache[cache_key] = (result, time.time())
+                    if len(cache) > 2000:
+                        cache.pop(next(iter(cache)))
+                    
                     return result
                     
         except Exception as e:
