@@ -89,7 +89,7 @@ def get_cookie_files(domain):
 # CORE ENGINE
 # -----------------------------
 def extract_media(url: str):
-    # ১. ক্যাশ চেক লজিক (অপরিবর্তিত)
+    # আপনার অরিজিনাল ক্যাশ চেক লজিক (অপরিবর্তিত)
     cache_key = hashlib.md5(url.encode()).hexdigest()
     if cache_key in cache:
         data, ts = cache[cache_key]
@@ -101,15 +101,13 @@ def extract_media(url: str):
     cookie_list = [None]
     cookie_list.extend(get_cookie_files(domain))
 
-    # ২. লুপের মাধ্যমে কুকি ও প্রসেসিং
     for cookie_path in cookie_list:
         ydl_opts = {
-            # FFmpeg মার্জিং এবং বেস্ট কোয়ালিটি নিশ্চিত করার জন্য
-            "format": "bestvideo+bestaudio/best", 
+            "format": "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best",
             "quiet": True,
             "no_warnings": True,
             "noplaylist": True,
-            "socket_timeout": 60, # বড় ভিডিওর জন্য টাইমআউট বাড়ানো হয়েছে
+            "socket_timeout": 45,
             "retries": 10,
             "nocheckcertificate": True,
             "geo_bypass": True,
@@ -125,50 +123,62 @@ def extract_media(url: str):
                 "facebook": {"force_generic_extractor": False}
             }
         }
+        if cookie_path: ydl_opts["cookiefile"] = cookie_path
         
-        if cookie_path:
-            ydl_opts["cookiefile"] = cookie_path
-            logging.info(f"Attempting with Cookie: {cookie_path}")
+        logging.info(f"Attempting with Cookie: {cookie_path}" if cookie_path else f"Attempting WITHOUT cookies for: {url}")
 
         try:
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 info = ydl.extract_info(url, download=False)
-                
-                # ৩. ফরম্যাট লিস্ট তৈরি লজিক
-                available_formats = []
-                for f in info.get("formats", []):
-                    # ভিডিও এবং অডিও কোডেক আছে কি না যাচাই
-                    if f.get("vcodec") != "none" and f.get("acodec") != "none":
-                        available_formats.append({
-                            "label": f.get("format_note", "default"),
-                            "height": f.get("height", 0),
-                            "ext": f.get("ext"),
-                            "url": f.get("url")
-                        })
-                
-                # হাইট অনুযায়ী সর্ট করা
-                available_formats.sort(key=lambda x: x.get("height", 0), reverse=True)
+                download_url = info.get("url")
 
-                # ফলাফল তৈরি
-                result = {
-                    "status": "success",
-                    "title": info.get("title", "Video"),
-                    "thumbnail": info.get("thumbnail"),
-                    "duration": info.get("duration"),
-                    "formats": available_formats, # ফ্লটার অ্যাপে এই লিস্টটি যাবে
-                    "source": info.get("extractor_key", domain)
-                }
-                
-                # ৪. ক্যাশ আপডেট
-                cache[cache_key] = (result, time.time())
-                if len(cache) > 2000:
-                    cache.pop(next(iter(cache)))
-                
-                return result
+                # আপনার অরিজিনাল ফরম্যাট সিলেকশন লজিক (অপরিবর্তিত)
+                if not download_url and "formats" in info:
+                    valid_formats = [f for f in info["formats"] if f.get("vcodec") != "none" and f.get("acodec") != "none"]
+                    if not valid_formats:
+                        valid_formats = [f for f in info["formats"] if f.get("url")]
+                    if valid_formats:
+                        valid_formats.sort(key=lambda x: (x.get("height") or 0), reverse=True)
+                        download_url = valid_formats[0]["url"]
 
+                if download_url:
+                    # নতুন লজিক: কোয়ালিটি সিলেকশনের জন্য লিস্ট তৈরি
+                    formats_list = []
+                    if "formats" in info:
+                        for f in info["formats"]:
+                            # নিশ্চিত করছি ভিডিও+অডিও ফাইলই আসছে
+                            if f.get("vcodec") != "none" and f.get("acodec") != "none":
+                                height = f.get("height")
+                                if height:
+                                    formats_list.append({
+                                        "label": f"{height}p",
+                                        "url": f.get("url")
+                                    })
+                        # রেজল্যুশন অনুযায়ী সাজানো
+                        formats_list.sort(key=lambda x: int(x['label'].replace('p', '')), reverse=True)
+
+                    # আপনার অরিজিনাল রেজাল্ট ডিকশনারি + নতুন ফরম্যাট লিস্ট
+                    result = {
+                        "status": "success",
+                        "url": download_url,
+                        "title": info.get("title", "Video"),
+                        "thumbnail": info.get("thumbnail"),
+                        "duration": info.get("duration"),
+                        "source": info.get("extractor_key", domain),
+                        "formats": formats_list  # আপনার কোয়ালিটি সিলেক্ট করার ডাটা
+                    }
+                    
+                    cache[cache_key] = (result, time.time())
+                    if len(cache) > 2000:
+                        cache.pop(next(iter(cache)))
+                    return result
+                    
         except Exception as e:
-            logging.error(f"Failed attempt for {url}: {str(e)}")
-            continue # অন্য কুকি ট্রাই করার জন্য
+            if not cookie_path:
+                logging.warning(f"Failed without cookies. Error: {str(e)}")
+            else:
+                logging.error(f"Failed with cookie {cookie_path}: {str(e)}")
+            continue
             
     return None
 
