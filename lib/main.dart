@@ -171,39 +171,33 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<void> _startDownloadProcess(DownloadTask task) async {
-  // ১. প্রসেস শুরু হওয়ার আগে স্ট্যাটাস আপডেট
-  setState(() {
-    task.statusText = "Analyzing...";
-  });
-
   try {
-    // ২. রেজল্ভ লিঙ্ক - ডেটা ফেচ করা
+    // ১. রেজল্ভ লিঙ্ক - ডেটা ফেচ করা
     final result = await _resolveLink(task.inputUrl);
     
-    // ৩. গুরুত্বপূর্ণ চেক: প্রসেস শেষ হওয়ার পর উইজেট এখনো অ্যাক্টিভ আছে কি না
-    if (!mounted) return; 
-
-    // ৪. স্টেট আপডেট
+    // ২. স্টেট আপডেট এবং ডেটা সেফটি চেক
     setState(() {
+      // টাইপ কাস্টিং নিরাপদ করা হলো
       task.availableFormats = (result['formats'] is List) ? result['formats'] : null;
       task.videoTitle = result['title'] ?? "Video_${task.id}";
       task.thumbnailUrl = result['thumbnail'];
       task.downloadUrl = result['url']; 
-      task.statusText = "Analyzing Complete";
+      task.statusText = "Analyzing Complete"; // স্ট্যাটাস আপডেট করলাম
     });
 
-    // ৫. ফরম্যাট চেক লজিক
+    // ৩. ফরম্যাট চেক লজিক (নিরাপদ উপায়)
+    // ফরম্যাট লিস্ট আছে কি না এবং সেটি খালি কি না তা চেক করছি
     if (task.availableFormats != null && task.availableFormats!.isNotEmpty) {
-      _showQualitySelector(task); // এটি এখন নিরাপদে কল হবে
+      _showQualitySelector(task); // কোয়ালিটি সিলেক্টর দেখাও
     } else {
+      // যদি ফরম্যাট না থাকে, ডিফল্ট লিঙ্কটি চেক করো
       if (task.downloadUrl == null || task.downloadUrl!.isEmpty) {
-        throw "No download link found in response";
+        throw "No download link found in response"; // এরর থ্রো করো
       }
-      await _proceedToDownload(task);
+      await _proceedToDownload(task); // সরাসরি ডাউনলোড শুরু করো
     }
   } catch (e) {
-    // এখানেও মাউন্টেড চেক করা জরুরি
-    if (!mounted) return;
+    // এরর হ্যান্ডলিং আগের মতোই থাকবে
     _handleTaskError(task, e);
   }
 }

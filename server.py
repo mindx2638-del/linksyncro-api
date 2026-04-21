@@ -145,12 +145,12 @@ def extract_media(url: str):
                 download_url = info.get("url")
 
                 # -----------------------------
-                # FALLBACK LOGIC (SAFE)
+                # ORIGINAL FALLBACK LOGIC (UNCHANGED)
                 # -----------------------------
                 if not download_url and "formats" in info:
                     valid_formats = [
                         f for f in info["formats"]
-                        if f.get("url") and f.get("vcodec") != "none"
+                        if f.get("vcodec") != "none" and f.get("acodec") != "none"
                     ]
 
                     if not valid_formats:
@@ -167,9 +167,10 @@ def extract_media(url: str):
                         download_url = valid_formats[0]["url"]
 
                 # -----------------------------
-                # QUALITY LIST (FIXED + SAFE)
+                # PROFESSIONAL QUALITY LIST (360p → 4K SAFE)
                 # -----------------------------
                 quality_map = {}
+                quality_list = []
 
                 if "formats" in info:
 
@@ -177,30 +178,25 @@ def extract_media(url: str):
                         url_f = f.get("url")
                         height = f.get("height")
 
-                        # skip invalid / audio only
                         if not url_f or not height:
                             continue
-                        if f.get("vcodec") == "none":
+
+                        # avoid duplicates (same resolution)
+                        if height in quality_map:
                             continue
 
-                        try:
-                            h = int(height)
-                        except:
-                            continue
-
-                        # avoid duplicates
-                        if h in quality_map:
-                            continue
-
-                        quality_map[h] = {
-                            "quality": f"{h}p",
-                            "height": h,
+                        quality_map[height] = {
+                            "quality": f"{height}p",
+                            "height": height,
                             "url": url_f,
                             "ext": f.get("ext", "mp4"),
                             "filesize": f.get("filesize") or 0
                         }
 
+                # convert dict → list
                 quality_list = list(quality_map.values())
+
+                # sort high → low (4K → 360p)
                 quality_list.sort(key=lambda x: x["height"], reverse=True)
 
                 # -----------------------------
@@ -215,6 +211,8 @@ def extract_media(url: str):
                         "thumbnail": info.get("thumbnail"),
                         "duration": info.get("duration"),
                         "source": info.get("extractor_key", domain),
+
+                        # UI FRIENDLY QUALITY LIST
                         "formats": quality_list
                     }
 
@@ -226,7 +224,10 @@ def extract_media(url: str):
                     return result
 
         except Exception as e:
-            logging.error(f"Error: {str(e)}")
+            if not cookie_path:
+                logging.warning(f"Failed without cookies. Error: {str(e)}")
+            else:
+                logging.error(f"Failed with cookie {cookie_path}: {str(e)}")
             continue
 
     return None
