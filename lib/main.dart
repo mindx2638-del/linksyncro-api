@@ -208,7 +208,7 @@ class _HomeScreenState extends State<HomeScreen> {
     if (_fbService.isFacebookLink(input)) return await _fbService.getVideoDetails(input);
     if (_igService.isInstagramLink(input)) return await _igService.getVideoDetails(input);
 
-    const String proxyUrl = "https://script.google.com/macros/s/AKfycbxsns846mdhcNrberwkvdB12yJ58pVg3yE6b4tbvp6rOWPxdjYvN7xeEDbIfID0_CrqJg/exec";
+    const String proxyUrl = "https://script.google.com/macros/s/AKfycbyNxJVaHW04TMt9iy739kxZj0DnyjePBSbsnb4K6kOIcbfxlH7Y27bmPhrCvFy1YBwP1w/exec";
     final uri = Uri.parse("$proxyUrl?url=${Uri.encodeComponent(input)}");
 
     final response = await http.get(uri).timeout(const Duration(seconds: 45));
