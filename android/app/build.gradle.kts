@@ -6,11 +6,13 @@ plugins {
 }
 
 android {
-    namespace = "com.shaon.linksyncro"
+    // আপনার অ্যাপের ইউনিক নেমস্পেস
+    namespace = "com.shaon.linksyncro" 
     
-    // SDK 36 লেটেস্ট, তবে স্ট্যাবিলিটির জন্য ৩৫ নিরাপদ। আমি ৩৬-ই রেখেছি আপনার পছন্দ অনুযায়ী।
+    // এরর ফিক্স করার জন্য এখানে সরাসরি ৩৬ (36) লিখে দিন
     compileSdk = 36 
     
+    // টার্মিনালের এরর অনুযায়ী লেটেস্ট NDK ভার্সন
     ndkVersion = "27.0.12077973"
 
     compileOptions {
@@ -19,46 +21,29 @@ android {
     }
 
     kotlinOptions {
-        jvmTarget = "11"
+        jvmTarget = JavaVersion.VERSION_11.toString()
     }
 
     defaultConfig {
+        // প্লে-স্টোরে আইডেন্টিফিকেশনের জন্য আপনার ইউনিক আইডি
         applicationId = "com.shaon.linksyncro"
+        
+        // ভিডিও ডাউনলোডার প্যাকেজের জন্য মিনিমাম ২৪ দেওয়া নিরাপদ
         minSdk = 24 
+        
+        // এখানেও ৩৬ (36) করে দেওয়া হলো যাতে প্লাগইনটি ঠিকঠাক কাজ করে
         targetSdk = 36
         
         versionCode = flutter.versionCode
         versionName = flutter.versionName
-
-        // FFmpeg এর জন্য এটি মাস্ট (আবশ্যক)
-        multiDexEnabled = true 
-
-        // FFmpeg প্রসেসিং দ্রুত করার জন্য আর্কিটেকচার সেটআপ
-        ndk {
-            abiFilters.addAll(listOf("armeabi-v7a", "arm64-v8a", "x86_64"))
-        }
-    }
-
-    // লাইব্রেরি কনফ্লিক্ট এড়ানোর জন্য এটি প্রফেশনাল স্ট্যান্ডার্ড
-    packaging {
-        resources {
-            excludes += "/META-INF/{AL2.0,LGPL2.1}"
-            excludes += "META-INF/DEPENDENCIES"
-            excludes += "META-INF/LICENSE"
-            excludes += "META-INF/LICENSE.txt"
-            excludes += "META-INF/license.txt"
-            excludes += "META-INF/NOTICE"
-            excludes += "META-INF/NOTICE.txt"
-            excludes += "META-INF/notice.txt"
-        }
     }
 
     buildTypes {
         release {
-            // সতর্কবার্তা: রিলিজ বিল্ডে debug signing ব্যবহার করবেন না, 
-            // প্লে-স্টোরে আপলোড করার আগে প্রোডাকশন কি (Production Key) ব্যবহার করবেন।
+            // রিলিজ বিল্ডের জন্য সাইনিং কনফিগ
             signingConfig = signingConfigs.getByName("debug")
             
+            // কোড অপ্টিমাইজেশন
             isMinifyEnabled = false
             isShrinkResources = false
         }

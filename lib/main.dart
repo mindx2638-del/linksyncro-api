@@ -7,8 +7,6 @@ import 'package:http/http.dart' as http;
 import 'package:dio/dio.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:media_scanner/media_scanner.dart';
-import 'package:ffmpeg_kit_flutter_full/ffmpeg_kit.dart';
-import 'package:ffmpeg_kit_flutter_full/return_code.dart';
 
 // আপনার লোকাল সার্ভিস ফাইলগুলো নিশ্চিত করুন প্রোজেক্টে আছে
 import 'youtube_service.dart';
@@ -47,8 +45,6 @@ class DownloadTask {
   String? videoTitle;
   String? thumbnailUrl;
   String? downloadUrl;
-  String? videoUrl; // নতুন
-  String? audioUrl; // নতুন
   String? savePath;
   double progress;
   String statusText;
@@ -63,8 +59,6 @@ class DownloadTask {
     this.videoTitle,
     this.thumbnailUrl,
     this.downloadUrl,
-    this.videoUrl, // আপডেট
-    this.audioUrl, // আপডেট
     this.savePath,
     this.progress = 0,
     this.statusText = "Analyzing...",
@@ -175,77 +169,33 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<void> _startDownloadProcess(DownloadTask task) async {
-  try {
-    final result = await _resolveLink(task.inputUrl);
-    setState(() {
-      task.videoUrl = result['video_url']; // আপডেট
-      task.audioUrl = result['audio_url']; // আপডেট
-      task.videoTitle = result['title'] ?? "Video_${task.id}";
-      task.thumbnailUrl = result['thumbnail'];
-    });
-
-    // ডাউনলোড ফোল্ডার সেটআপ
-    final root = "/storage/emulated/0";
-    final folder = Directory("$root/Download/LinkSyncro");
-    if (!await folder.exists()) await folder.create(recursive: true);
-
-    String cleanName = task.videoTitle!.replaceAll(RegExp(r'[<>:"/\\|?*]'), '').trim();
-    task.savePath = "${folder.path}/${cleanName}_final.mp4";
-
-    // মার্জিং প্রসেস শুরু করুন
-    await _orchestrateDownload(task);
-
-  } catch (e) {
-    _handleTaskError(task, e);
-  }
-}
-
-Future<void> _orchestrateDownload(DownloadTask task) async {
-  try {
-    setState(() => task.statusText = "Downloading streams...");
-    
-    // ভিডিও এবং অডিওর জন্য আলাদা পাথ
-    final tempDir = await getTemporaryDirectory(); // path_provider প্যাকেজ লাগবে
-    final vPath = "${tempDir.path}/${task.id}_v.mp4";
-    final aPath = "${tempDir.path}/${task.id}_a.m4a";
-
-    // ১. ডাউনলোড ভিডিও
-    await _dio.download(task.videoUrl!, vPath, onReceiveProgress: (rec, total) {
-      setState(() => task.progress = rec / total * 0.5);
-    });
-
-    // ২. ডাউনলোড অডিও (যদি থাকে)
-    if (task.audioUrl != null) {
-      await _dio.download(task.audioUrl!, aPath, onReceiveProgress: (rec, total) {
-        setState(() => task.progress = 0.5 + (rec / total * 0.2));
-      });
-    }
-
-    // ৩. FFmpeg মার্জিং
-    setState(() => task.statusText = "Merging...");
-    String command = '-i "$vPath" -i "$aPath" -c copy "${task.savePath}"';
-    
-    // FFmpegKit ব্যবহার করে মার্জ করুন
-    final session = await FFmpegKit.execute(command);
-    final returnCode = await session.getReturnCode();
-
-    if (ReturnCode.isSuccess(returnCode)) {
+    try {
+      final result = await _resolveLink(task.inputUrl);
       setState(() {
-        task.isFinished = true;
-        task.isProcessing = false;
-        task.statusText = "Saved to Gallery";
-        task.progress = 1.0;
+        task.downloadUrl = result['url'];
+        task.videoTitle = result['title'] ?? "Video_${task.id}";
+        task.thumbnailUrl = result['thumbnail'];
       });
-      // Temp ফাইল মুছে ফেলুন
-      await File(vPath).delete();
-      if (await File(aPath).exists()) await File(aPath).delete();
-    } else {
-      throw "Merging failed";
+
+      if (task.downloadUrl == null) throw "Invalid response from server";
+
+      const root = "/storage/emulated/0";
+      final folder = Directory("$root/Download/LinkSyncro");
+      if (!await folder.exists()) await folder.create(recursive: true);
+
+      // ফাইল নেম ক্লিনিং এবং লেন্থ লিমিট (Error 36 Fix)
+      String cleanName = task.videoTitle!.replaceAll(RegExp(r'[<>:"/\\|?*]'), '').trim();
+      if (cleanName.length > 50) {
+        cleanName = cleanName.substring(0, 50).trim();
+      }
+      if (cleanName.isEmpty) cleanName = "Video_${task.id}";
+
+      task.savePath = "${folder.path}/$cleanName.mp4";
+      await _executeDownload(task);
+    } catch (e) {
+      _handleTaskError(task, e);
     }
-  } catch (e) {
-    _handleTaskError(task, e);
   }
-}
 
   Future<Map<String, dynamic>> _resolveLink(String input) async {
     if (_ytService.isYouTubeLink(input)) return await _ytService.getVideoDetails(input);

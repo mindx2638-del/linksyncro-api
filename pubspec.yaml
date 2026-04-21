@@ -12,7 +12,7 @@ dependencies:
   cupertino_icons: ^1.0.6
   http: ^1.2.0
   dio: ^5.4.0
-  path_provider: ^2.1.2
+  path_provider: ^2.1.5
   permission_handler: ^11.3.0
   media_scanner: ^2.2.0
   video_player: ^2.10.1  
@@ -27,7 +27,7 @@ dependencies:
   audio_service: ^0.18.12
   just_audio: ^0.9.36
   flutter_inappwebview: ^6.1.4
-  ffmpeg_kit_flutter_full: ^6.0.3
+
 
 flutter:
   uses-material-design: true
