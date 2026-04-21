@@ -46,6 +46,7 @@ class DownloadTask {
   String? thumbnailUrl;
   String? downloadUrl;
   String? savePath;
+  List<dynamic>? availableFormats;
   double progress;
   String statusText;
   bool isProcessing;
@@ -60,6 +61,7 @@ class DownloadTask {
     this.thumbnailUrl,
     this.downloadUrl,
     this.savePath,
+    this.availableFormats,
     this.progress = 0,
     this.statusText = "Analyzing...",
     this.isProcessing = true,
@@ -169,33 +171,43 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<void> _startDownloadProcess(DownloadTask task) async {
-    try {
-      final result = await _resolveLink(task.inputUrl);
-      setState(() {
-        task.downloadUrl = result['url'];
-        task.videoTitle = result['title'] ?? "Video_${task.id}";
-        task.thumbnailUrl = result['thumbnail'];
-      });
+  // ১. প্রসেস শুরু হওয়ার আগে স্ট্যাটাস আপডেট
+  setState(() {
+    task.statusText = "Analyzing...";
+  });
 
-      if (task.downloadUrl == null) throw "Invalid response from server";
+  try {
+    // ২. রেজল্ভ লিঙ্ক - ডেটা ফেচ করা
+    final result = await _resolveLink(task.inputUrl);
+    
+    // ৩. গুরুত্বপূর্ণ চেক: প্রসেস শেষ হওয়ার পর উইজেট এখনো অ্যাক্টিভ আছে কি না
+    if (!mounted) return; 
 
-      const root = "/storage/emulated/0";
-      final folder = Directory("$root/Download/LinkSyncro");
-      if (!await folder.exists()) await folder.create(recursive: true);
+    // ৪. স্টেট আপডেট
+    setState(() {
+      task.availableFormats = (result['formats'] is List) ? result['formats'] : null;
+      task.videoTitle = result['title'] ?? "Video_${task.id}";
+      task.thumbnailUrl = result['thumbnail'];
+      task.downloadUrl = result['url']; 
+      task.statusText = "Analyzing Complete";
+    });
 
-      // ফাইল নেম ক্লিনিং এবং লেন্থ লিমিট (Error 36 Fix)
-      String cleanName = task.videoTitle!.replaceAll(RegExp(r'[<>:"/\\|?*]'), '').trim();
-      if (cleanName.length > 50) {
-        cleanName = cleanName.substring(0, 50).trim();
+    // ৫. ফরম্যাট চেক লজিক
+    if (task.availableFormats != null && task.availableFormats!.isNotEmpty) {
+      _showQualitySelector(task); // এটি এখন নিরাপদে কল হবে
+    } else {
+      if (task.downloadUrl == null || task.downloadUrl!.isEmpty) {
+        throw "No download link found in response";
       }
-      if (cleanName.isEmpty) cleanName = "Video_${task.id}";
-
-      task.savePath = "${folder.path}/$cleanName.mp4";
-      await _executeDownload(task);
-    } catch (e) {
-      _handleTaskError(task, e);
+      await _proceedToDownload(task);
     }
+  } catch (e) {
+    // এখানেও মাউন্টেড চেক করা জরুরি
+    if (!mounted) return;
+    _handleTaskError(task, e);
   }
+}
+
 
   Future<Map<String, dynamic>> _resolveLink(String input) async {
     if (_ytService.isYouTubeLink(input)) return await _ytService.getVideoDetails(input);
@@ -599,4 +611,62 @@ Widget build(BuildContext context) {
       ),
     );
   }
+
+  void _showQualitySelector(DownloadTask task) {
+  showModalBottomSheet(
+    context: context,
+    builder: (context) {
+      return Container(
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Text("Select Quality", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+            const Divider(),
+            ListView.builder(
+              shrinkWrap: true,
+              itemCount: task.availableFormats!.length,
+              itemBuilder: (context, index) {
+                final format = task.availableFormats![index];
+                return ListTile(
+                  leading: const Icon(Icons.video_file_outlined),
+                  title: Text("${format['height']}p - ${format['ext']}"),
+                  onTap: () {
+                    Navigator.pop(context); // ডায়ালগ বন্ধ করুন
+                    task.downloadUrl = format['url']; // সিলেক্ট করা URL বসান
+                    _proceedToDownload(task); // ডাউনলোড শুরু করুন
+                  },
+                );
+              },
+            ),
+          ],
+        ),
+      );
+    },
+  );
+}
+
+Future<void> _proceedToDownload(DownloadTask task) async {
+  try {
+    const root = "/storage/emulated/0";
+    final folder = Directory("$root/Download/LinkSyncro");
+    if (!await folder.exists()) await folder.create(recursive: true);
+
+    // আগের সেই ফাইল নেম ক্লিনিং এবং লেন্থ লিমিট (Error 36 Fix)
+    String cleanName = task.videoTitle!.replaceAll(RegExp(r'[<>:"/\\|?*]'), '').trim();
+    if (cleanName.length > 50) {
+      cleanName = cleanName.substring(0, 50).trim();
+    }
+    if (cleanName.isEmpty) cleanName = "Video_${task.id}";
+
+    task.savePath = "${folder.path}/$cleanName.mp4";
+    
+    // ডাউনলোড শুরু করুন
+    await _executeDownload(task);
+  } catch (e) {
+    _handleTaskError(task, e);
+  }
+}
+
+
 }
