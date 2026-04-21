@@ -27,6 +27,7 @@ dependencies:
   audio_service: ^0.18.12
   just_audio: ^0.9.36
   flutter_inappwebview: ^6.1.4
+  ffmpeg_kit_flutter_full: ^6.0.3
 
 flutter:
   uses-material-design: true

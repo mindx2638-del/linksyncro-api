@@ -7,6 +7,13 @@ import 'package:http/http.dart' as http;
 import 'package:dio/dio.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:media_scanner/media_scanner.dart';
+import 'package:ffmpeg_kit_flutter_full/ffmpeg_kit.dart';
+import 'package:ffmpeg_kit_flutter_full/return_code.dart';
+
+// আপনার লোকাল সার্ভিস ফাইলগুলো নিশ্চিত করুন প্রোজেক্টে আছে
+import 'youtube_service.dart';
+import 'facebook_service.dart';
+import 'instagram_service.dart';
 
 import 'package:photo_manager/photo_manager.dart';
 import 'video_gallery_page.dart'; // আপনার তৈরি করা ফাইল
@@ -40,6 +47,8 @@ class DownloadTask {
   String? videoTitle;
   String? thumbnailUrl;
   String? downloadUrl;
+  String? videoUrl; // নতুন
+  String? audioUrl; // নতুন
   String? savePath;
   double progress;
   String statusText;
@@ -54,6 +63,8 @@ class DownloadTask {
     this.videoTitle,
     this.thumbnailUrl,
     this.downloadUrl,
+    this.videoUrl, // আপডেট
+    this.audioUrl, // আপডেট
     this.savePath,
     this.progress = 0,
     this.statusText = "Analyzing...",
@@ -104,7 +115,6 @@ class _HomeScreenState extends State<HomeScreen> {
   void initState() {
     super.initState();
     _checkPermission();
-    _keepServerAlive(); 
   }
 
   Future<void> _checkPermission() async {
@@ -112,12 +122,11 @@ class _HomeScreenState extends State<HomeScreen> {
       await Permission.notification.request();
     }
   }
-
   final TextEditingController _urlController = TextEditingController();
   final List<DownloadTask> _downloadTasks = [];
-  
-  // পুরনো সার্ভিসগুলো সরিয়ে এখানে নতুন ApiService যুক্ত করলাম
-  final ApiService _apiService = ApiService();
+  final YouTubeService _ytService = YouTubeService();
+  final FacebookService _fbService = FacebookService();
+  final InstagramService _igService = InstagramService();
   
   final Dio _dio = Dio(BaseOptions(
     connectTimeout: const Duration(seconds: 30),
@@ -167,101 +176,91 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Future<void> _startDownloadProcess(DownloadTask task) async {
   try {
-    setState(() => task.statusText = "Analyzing...");
-    
-    // ১. সার্ভার থেকে ডাটা আনুন
     final result = await _resolveLink(task.inputUrl);
-    
-    // ২. চেক করুন ফরম্যাট লিস্ট আছে কি না (যদি আপনার ব্যাকএন্ড থেকে লিস্ট আসে)
-    if (result.containsKey('formats') && result['formats'] is List) {
-      // যদি ফরম্যাট লিস্ট থাকে, তবে কোয়ালিটি সিলেকশন দেখান
-      _showQualitySelection(result['formats'], task, result['title'], result['thumbnail']);
-    } else {
-      // যদি ফরম্যাট লিস্ট না থাকে, পুরনো পদ্ধতিতে ডাউনলোড শুরু করুন
-      task.downloadUrl = result['url'];
+    setState(() {
+      task.videoUrl = result['video_url']; // আপডেট
+      task.audioUrl = result['audio_url']; // আপডেট
       task.videoTitle = result['title'] ?? "Video_${task.id}";
       task.thumbnailUrl = result['thumbnail'];
-      await _prepareDownload(task);
+    });
+
+    // ডাউনলোড ফোল্ডার সেটআপ
+    final root = "/storage/emulated/0";
+    final folder = Directory("$root/Download/LinkSyncro");
+    if (!await folder.exists()) await folder.create(recursive: true);
+
+    String cleanName = task.videoTitle!.replaceAll(RegExp(r'[<>:"/\\|?*]'), '').trim();
+    task.savePath = "${folder.path}/${cleanName}_final.mp4";
+
+    // মার্জিং প্রসেস শুরু করুন
+    await _orchestrateDownload(task);
+
+  } catch (e) {
+    _handleTaskError(task, e);
+  }
+}
+
+Future<void> _orchestrateDownload(DownloadTask task) async {
+  try {
+    setState(() => task.statusText = "Downloading streams...");
+    
+    // ভিডিও এবং অডিওর জন্য আলাদা পাথ
+    final tempDir = await getTemporaryDirectory(); // path_provider প্যাকেজ লাগবে
+    final vPath = "${tempDir.path}/${task.id}_v.mp4";
+    final aPath = "${tempDir.path}/${task.id}_a.m4a";
+
+    // ১. ডাউনলোড ভিডিও
+    await _dio.download(task.videoUrl!, vPath, onReceiveProgress: (rec, total) {
+      setState(() => task.progress = rec / total * 0.5);
+    });
+
+    // ২. ডাউনলোড অডিও (যদি থাকে)
+    if (task.audioUrl != null) {
+      await _dio.download(task.audioUrl!, aPath, onReceiveProgress: (rec, total) {
+        setState(() => task.progress = 0.5 + (rec / total * 0.2));
+      });
+    }
+
+    // ৩. FFmpeg মার্জিং
+    setState(() => task.statusText = "Merging...");
+    String command = '-i "$vPath" -i "$aPath" -c copy "${task.savePath}"';
+    
+    // FFmpegKit ব্যবহার করে মার্জ করুন
+    final session = await FFmpegKit.execute(command);
+    final returnCode = await session.getReturnCode();
+
+    if (ReturnCode.isSuccess(returnCode)) {
+      setState(() {
+        task.isFinished = true;
+        task.isProcessing = false;
+        task.statusText = "Saved to Gallery";
+        task.progress = 1.0;
+      });
+      // Temp ফাইল মুছে ফেলুন
+      await File(vPath).delete();
+      if (await File(aPath).exists()) await File(aPath).delete();
+    } else {
+      throw "Merging failed";
     }
   } catch (e) {
     _handleTaskError(task, e);
   }
 }
 
-  Future<void> _prepareDownload(DownloadTask task) async {
-  try {
-    const root = "/storage/emulated/0";
-    final folder = Directory("$root/Download/LinkSyncro");
-    if (!await folder.exists()) await folder.create(recursive: true);
-
-    String cleanName = task.videoTitle!.replaceAll(RegExp(r'[<>:"/\\|?*]'), '').trim();
-    if (cleanName.length > 50) cleanName = cleanName.substring(0, 50).trim();
-    if (cleanName.isEmpty) cleanName = "Video_${task.id}";
-
-    task.savePath = "${folder.path}/$cleanName.mp4";
-    
-    // ডাউনলোড শুরু করুন
-    await _executeDownload(task);
-  } catch (e) {
-    _handleTaskError(task, e);
-  }
-}
-
-void _showQualitySelection(List<dynamic> formats, DownloadTask task, String? title, String? thumbnail) {
-  task.videoTitle = title ?? "Video_${task.id}";
-  task.thumbnailUrl = thumbnail;
-
-  showModalBottomSheet(
-    context: context,
-    backgroundColor: Theme.of(context).scaffoldBackgroundColor,
-    shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
-    builder: (context) {
-      return Container(
-        padding: const EdgeInsets.all(20),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Text("Select Video Quality", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-            const SizedBox(height: 10),
-            ListView.builder(
-              shrinkWrap: true,
-              itemCount: formats.length,
-              itemBuilder: (context, index) {
-                final fmt = formats[index];
-                return ListTile(
-                  leading: const Icon(Icons.video_library, color: Colors.indigo),
-                  title: Text(fmt['resolution'] ?? "Unknown Quality"),
-                  trailing: const Icon(Icons.download_for_offline),
-                  onTap: () {
-                    Navigator.pop(context); // পপ-আপ বন্ধ
-                    task.downloadUrl = fmt['url']; // সিলেক্ট করা URL বসান
-                    _prepareDownload(task); // ডাউনলোড শুরু করুন
-                  },
-                );
-              },
-            ),
-          ],
-        ),
-      );
-    },
-  );
-}
-
-
   Future<Map<String, dynamic>> _resolveLink(String input) async {
-  try {
-    // এখন আর কোনো সার্ভিস চেক করতে হবে না, সরাসরি পাইথন ব্যাকএন্ডে কল যাবে
-    return await _apiService.fetchMediaDetails(input);
-  } catch (e) {
-    // যদি ব্যাকএন্ড থেকে কোনো এরর আসে
-    throw "Server Error: ${e.toString()}";
-  }
-}
+    if (_ytService.isYouTubeLink(input)) return await _ytService.getVideoDetails(input);
+    if (_fbService.isFacebookLink(input)) return await _fbService.getVideoDetails(input);
+    if (_igService.isInstagramLink(input)) return await _igService.getVideoDetails(input);
 
-void _keepServerAlive() {
-  const String proxyUrl = "https://script.google.com/macros/s/AKfycbw_6yrOz6F2umCUlCmPIOFI1xf7d3NMG5NF8gckpwrpsGPRrXVmZaV137P5W27L7nf74g/exec";
-  http.get(Uri.parse(proxyUrl)).catchError((e) => print("Ping failed: $e"));
-}
+    const String proxyUrl = "https://script.google.com/macros/s/AKfycbxsns846mdhcNrberwkvdB12yJ58pVg3yE6b4tbvp6rOWPxdjYvN7xeEDbIfID0_CrqJg/exec";
+    final uri = Uri.parse("$proxyUrl?url=${Uri.encodeComponent(input)}");
+
+    final response = await http.get(uri).timeout(const Duration(seconds: 45));
+    if (response.statusCode == 200) {
+      return jsonDecode(utf8.decode(response.bodyBytes));
+    }
+    throw "Proxy server failed to respond";
+  }
 
   Future<void> _executeDownload(DownloadTask task) async {
     RandomAccessFile? raf;

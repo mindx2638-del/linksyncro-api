@@ -89,20 +89,22 @@ def get_cookie_files(domain):
 # CORE ENGINE
 # -----------------------------
 def extract_media(url: str):
-    # ক্যাশ চেক (অপরিবর্তিত)
     cache_key = hashlib.md5(url.encode()).hexdigest()
+    
+    # Cache check
     if cache_key in cache:
         data, ts = cache[cache_key]
         if time.time() - ts < CACHE_TTL:
+            logging.info(f"Cache Hit: {url}")
             return data
 
     domain = urlparse(url).hostname or ""
-    cookie_list = [None] 
+    cookie_list = [None]
     cookie_list.extend(get_cookie_files(domain))
 
+    # ইটারেটিভ কুকি ট্রাই লজিক
     for cookie_path in cookie_list:
         ydl_opts = {
-            # "format" লাইনটি এখান থেকে সরিয়ে দিন, নাহলে yt-dlp সব কোয়ালিটি দিবে না
             "quiet": True,
             "no_warnings": True,
             "noplaylist": True,
@@ -112,61 +114,58 @@ def extract_media(url: str):
             "geo_bypass": True,
             "user_agent": random.choice(USER_AGENTS),
             "extractor_args": {
-                "youtube": {"player_client": ["android", "ios", "mweb", "tv"], "player_skip": ["webpage", "configs"]},
-                "instagram": {"force_subtitles": False},
-                "facebook": {"force_generic_extractor": False}
+                "youtube": {"player_client": ["android", "ios", "mweb", "tv"]},
             }
         }
-
         if cookie_path:
             ydl_opts["cookiefile"] = cookie_path
+            logging.info(f"Attempting with Cookie: {cookie_path}")
 
         try:
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                # Meta-data extract করছি, ডাউনলোড করছি না
                 info = ydl.extract_info(url, download=False)
-                
-                # এখানে সব ফরম্যাট সংগ্রহ করা হচ্ছে
-                available_formats = []
-                raw_formats = info.get("formats", [])
-                
-                # ভিডিও এবং অডিও আছে এমন ফরম্যাটগুলো ফিল্টার করছি
-                for f in raw_formats:
-                    # আমরা শুধু ভিডিও এবং অডিও যুক্ত ফাইল চাচ্ছি (যাতে সরাসরি প্লে হয়)
-                    if f.get("vcodec") != "none" and f.get("acodec") != "none" and f.get("resolution"):
-                        available_formats.append({
-                            "resolution": f.get("resolution"),
-                            "url": f.get("url")
-                        })
-                
-                # রেজোলিউশন অনুযায়ী সাজানো (বড় থেকে ছোট)
-                if available_formats:
-                    available_formats.sort(key=lambda x: int(x['resolution'].replace('p', '').split('x')[-1] if 'x' in x['resolution'] else x['resolution'].replace('p', '')), reverse=True)
-                
-                # যদি কোনো ফরম্যাট না পায়, তাহলে অরিজিনাল লিঙ্ক ট্রাই করা
-                if not available_formats and info.get("url"):
-                    available_formats.append({"resolution": "Best Available", "url": info.get("url")})
+                formats = info.get("formats", [])
 
-                if available_formats:
+                # ১. সেরা ভিডিও স্ট্রিম খোঁজা (vcodec আছে, acodec নেই)
+                video_formats = [f for f in formats if f.get("vcodec") != "none" and f.get("acodec") == "none"]
+                best_video = sorted(video_formats, key=lambda x: x.get("height", 0), reverse=True)
+                
+                # ২. সেরা অডিও স্ট্রিম খোঁজা (acodec আছে, vcodec নেই)
+                audio_formats = [f for f in formats if f.get("acodec") != "none" and f.get("vcodec") == "none"]
+                best_audio = sorted(audio_formats, key=lambda x: x.get("abr", 0), reverse=True)
+
+                # ৩. যদি আলাদা স্ট্রিম না পাওয়া যায়, তবে কম্বাইন্ড ফরম্যাট খুঁজবে
+                if not best_video:
+                    best_video = sorted([f for f in formats if f.get("vcodec") != "none"], key=lambda x: x.get("height", 0), reverse=True)
+                
+                if best_video:
+                    video_url = best_video[0]["url"]
+                    audio_url = best_audio[0]["url"] if best_audio else None
+
                     result = {
                         "status": "success",
+                        "video_url": video_url,
+                        "audio_url": audio_url,
                         "title": info.get("title", "Video"),
                         "thumbnail": info.get("thumbnail"),
                         "duration": info.get("duration"),
-                        "formats": available_formats, # অ্যাপ এখন এখান থেকে লিস্ট পাবে
                         "source": info.get("extractor_key", domain)
                     }
-                    
+
+                    # Cache Update
                     cache[cache_key] = (result, time.time())
                     if len(cache) > 2000:
                         cache.pop(next(iter(cache)))
                     
                     return result
-                    
+
         except Exception as e:
-            logging.error(f"Error: {str(e)}")
-            continue 
+            logging.error(f"Error with cookie {cookie_path}: {str(e)}")
+            continue
 
     return None
+
 
 # -----------------------------
 # ROUTES
