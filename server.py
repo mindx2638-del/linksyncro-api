@@ -199,16 +199,6 @@ def extract_media(url: str):
                 # sort high → low (4K → 360p)
                 quality_list.sort(key=lambda x: x["height"], reverse=True)
 
-                # --- এখানে নতুন কোডটি বসান ---
-                if not quality_list and download_url:
-                    quality_list.append({
-                        "quality": "Best Available",
-                        "height": 720,
-                        "url": download_url,
-                        "ext": "mp4",
-                        "filesize": 0
-                    })
-
                 # -----------------------------
                 # RESULT
                 # -----------------------------

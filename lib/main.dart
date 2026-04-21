@@ -172,31 +172,32 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Future<void> _startDownloadProcess(DownloadTask task) async {
   try {
+    // ১. রেজল্ভ লিঙ্ক - ডেটা ফেচ করা
     final result = await _resolveLink(task.inputUrl);
     
+    // ২. স্টেট আপডেট এবং ডেটা সেফটি চেক
     setState(() {
-      // ব্যাকএন্ড থেকে ফরম্যাট না আসলে, আমরা নিজেরা একটি ডিফল্ট ফরম্যাট তৈরি করে নিচ্ছি
-      if (result['formats'] == null || (result['formats'] as List).isEmpty) {
-        task.availableFormats = [{
-          "quality": "Best Available",
-          "height": 720,
-          "url": result['url'],
-          "ext": "mp4"
-        }];
-      } else {
-        task.availableFormats = result['formats'];
-      }
-
+      // টাইপ কাস্টিং নিরাপদ করা হলো
+      task.availableFormats = (result['formats'] is List) ? result['formats'] : null;
       task.videoTitle = result['title'] ?? "Video_${task.id}";
       task.thumbnailUrl = result['thumbnail'];
       task.downloadUrl = result['url']; 
-      task.statusText = "Select Quality"; 
+      task.statusText = "Analyzing Complete"; // স্ট্যাটাস আপডেট করলাম
     });
 
-    // এখন আর সরাসরি ডাউনলোড হবে না, সবসময় সিলেক্টর দেখাবে
-    _showQualitySelector(task); 
-    
+    // ৩. ফরম্যাট চেক লজিক (নিরাপদ উপায়)
+    // ফরম্যাট লিস্ট আছে কি না এবং সেটি খালি কি না তা চেক করছি
+    if (task.availableFormats != null && task.availableFormats!.isNotEmpty) {
+      _showQualitySelector(task); // কোয়ালিটি সিলেক্টর দেখাও
+    } else {
+      // যদি ফরম্যাট না থাকে, ডিফল্ট লিঙ্কটি চেক করো
+      if (task.downloadUrl == null || task.downloadUrl!.isEmpty) {
+        throw "No download link found in response"; // এরর থ্রো করো
+      }
+      await _proceedToDownload(task); // সরাসরি ডাউনলোড শুরু করো
+    }
   } catch (e) {
+    // এরর হ্যান্ডলিং আগের মতোই থাকবে
     _handleTaskError(task, e);
   }
 }
@@ -605,13 +606,7 @@ Widget build(BuildContext context) {
     );
   }
 
- void _showQualitySelector(DownloadTask task) {
-  // ১. সেফটি চেক: যদি ফরম্যাট লিস্ট না থাকে বা খালি হয়
-  if (task.availableFormats == null || task.availableFormats!.isEmpty) {
-    _showToast("No quality options available", isError: true);
-    return;
-  }
-
+  void _showQualitySelector(DownloadTask task) {
   showModalBottomSheet(
     context: context,
     builder: (context) {
@@ -626,24 +621,14 @@ Widget build(BuildContext context) {
               shrinkWrap: true,
               itemCount: task.availableFormats!.length,
               itemBuilder: (context, index) {
-                // ২. সেফটি চেক: ফরম্যাট আইটেমটি চেক করা
                 final format = task.availableFormats![index];
-                final String qualityLabel = format['quality'] ?? "Best Available";
-                final String? videoUrl = format['url'];
-
                 return ListTile(
-                  leading: const Icon(Icons.video_file_outlined, color: Colors.indigo),
-                  title: Text(qualityLabel),
+                  leading: const Icon(Icons.video_file_outlined),
+                  title: Text("${format['height']}p - ${format['ext']}"),
                   onTap: () {
-                    Navigator.pop(context);
-                    
-                    // ৩. ইউআরএল আছে কি না নিশ্চিত হয়ে তারপর প্রসিড করুন
-                    if (videoUrl != null) {
-                      task.downloadUrl = videoUrl;
-                      _proceedToDownload(task);
-                    } else {
-                      _showToast("Error: No link found for this quality", isError: true);
-                    }
+                    Navigator.pop(context); // ডায়ালগ বন্ধ করুন
+                    task.downloadUrl = format['url']; // সিলেক্ট করা URL বসান
+                    _proceedToDownload(task); // ডাউনলোড শুরু করুন
                   },
                 );
               },
@@ -654,8 +639,6 @@ Widget build(BuildContext context) {
     },
   );
 }
-
-
 
 Future<void> _proceedToDownload(DownloadTask task) async {
   try {
