@@ -169,33 +169,87 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<void> _startDownloadProcess(DownloadTask task) async {
-    try {
-      final result = await _resolveLink(task.inputUrl);
-      setState(() {
-        task.downloadUrl = result['url'];
-        task.videoTitle = result['title'] ?? "Video_${task.id}";
-        task.thumbnailUrl = result['thumbnail'];
-      });
+  try {
+    final result = await _resolveLink(task.inputUrl);
 
-      if (task.downloadUrl == null) throw "Invalid response from server";
-
-      const root = "/storage/emulated/0";
-      final folder = Directory("$root/Download/LinkSyncro");
-      if (!await folder.exists()) await folder.create(recursive: true);
-
-      // ফাইল নেম ক্লিনিং এবং লেন্থ লিমিট (Error 36 Fix)
-      String cleanName = task.videoTitle!.replaceAll(RegExp(r'[<>:"/\\|?*]'), '').trim();
-      if (cleanName.length > 50) {
-        cleanName = cleanName.substring(0, 50).trim();
-      }
-      if (cleanName.isEmpty) cleanName = "Video_${task.id}";
-
-      task.savePath = "${folder.path}/$cleanName.mp4";
-      await _executeDownload(task);
-    } catch (e) {
-      _handleTaskError(task, e);
+    // যদি ফরম্যাট লিস্ট থাকে তবে সিলেকশন মেনু দেখাও
+    if (result.containsKey('formats') && result['formats'] != null && result['formats'].isNotEmpty) {
+      _showQualityBottomSheet(task, result['formats'], result['title'], result['thumbnail']);
+    } else {
+      // ফরম্যাট না থাকলে সরাসরি আপনার অরিজিনাল ডাউনলোড লজিকে পাঠিয়ে দাও
+      await _runFinalDownloadSequence(task, result['url'], result['title'], result['thumbnail']);
     }
+  } catch (e) {
+    _handleTaskError(task, e);
   }
+}
+
+void _showQualityBottomSheet(DownloadTask task, List<dynamic> formats, String? title, String? thumb) {
+  showModalBottomSheet(
+    context: context,
+    builder: (context) {
+      return Container(
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Text("Select Quality", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+            const SizedBox(height: 15),
+            ListView.builder(
+              shrinkWrap: true,
+              itemCount: formats.length,
+              itemBuilder: (context, index) {
+                final format = formats[index];
+                return ListTile(
+                  leading: const Icon(Icons.video_library, color: Colors.indigo),
+                  title: Text("${format['quality']} (${format['ext']})"),
+                  onTap: () {
+                    Navigator.pop(context);
+                    // এখানে সিলেক্ট করার পর আপনার অরিজিনাল সিকোয়েন্সটিই শুরু হবে
+                    _runFinalDownloadSequence(task, format['url'], title, thumb);
+                  },
+                );
+              },
+            ),
+          ],
+        ),
+      );
+    },
+  );
+}
+
+Future<void> _runFinalDownloadSequence(DownloadTask task, String? url, String? title, String? thumbnail) async {
+  try {
+    // অরিজিনাল স্টেট আপডেট
+    setState(() {
+      task.downloadUrl = url;
+      task.videoTitle = title ?? "Video_${task.id}";
+      task.thumbnailUrl = thumbnail;
+    });
+
+    if (task.downloadUrl == null) throw "Invalid response from server";
+
+    // অরিজিনাল ফোল্ডার লজিক
+    const root = "/storage/emulated/0";
+    final folder = Directory("$root/Download/LinkSyncro");
+    if (!await folder.exists()) await folder.create(recursive: true);
+
+    // --- আপনার অরিজিনাল ফাইল নেম ক্লিনিং এবং লেন্থ লিমিট (Error 36 Fix) ---
+    String cleanName = task.videoTitle!.replaceAll(RegExp(r'[<>:"/\\|?*]'), '').trim();
+    if (cleanName.length > 50) {
+      cleanName = cleanName.substring(0, 50).trim();
+    }
+    if (cleanName.isEmpty) cleanName = "Video_${task.id}";
+    // ---------------------------------------------------------------------
+
+    task.savePath = "${folder.path}/$cleanName.mp4";
+    
+    // অরিজিনাল ডাউনলোড শুরু
+    await _executeDownload(task);
+  } catch (e) {
+    _handleTaskError(task, e);
+  }
+}
 
   Future<Map<String, dynamic>> _resolveLink(String input) async {
     if (_ytService.isYouTubeLink(input)) return await _ytService.getVideoDetails(input);
@@ -599,4 +653,7 @@ Widget build(BuildContext context) {
       ),
     );
   }
+
+ 
+
 }
