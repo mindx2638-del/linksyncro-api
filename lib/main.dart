@@ -8,11 +8,6 @@ import 'package:dio/dio.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:media_scanner/media_scanner.dart';
 
-// আপনার লোকাল সার্ভিস ফাইলগুলো নিশ্চিত করুন প্রোজেক্টে আছে
-import 'youtube_service.dart';
-import 'facebook_service.dart';
-import 'instagram_service.dart';
-
 import 'package:photo_manager/photo_manager.dart';
 import 'video_gallery_page.dart'; // আপনার তৈরি করা ফাইল
 import 'video_player_page.dart';  // আপনার তৈরি করা ফাইল
@@ -109,6 +104,7 @@ class _HomeScreenState extends State<HomeScreen> {
   void initState() {
     super.initState();
     _checkPermission();
+    _keepServerAlive(); 
   }
 
   Future<void> _checkPermission() async {
@@ -116,11 +112,12 @@ class _HomeScreenState extends State<HomeScreen> {
       await Permission.notification.request();
     }
   }
+
   final TextEditingController _urlController = TextEditingController();
   final List<DownloadTask> _downloadTasks = [];
-  final YouTubeService _ytService = YouTubeService();
-  final FacebookService _fbService = FacebookService();
-  final InstagramService _igService = InstagramService();
+  
+  // পুরনো সার্ভিসগুলো সরিয়ে এখানে নতুন ApiService যুক্ত করলাম
+  final ApiService _apiService = ApiService();
   
   final Dio _dio = Dio(BaseOptions(
     connectTimeout: const Duration(seconds: 30),
@@ -170,43 +167,75 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Future<void> _startDownloadProcess(DownloadTask task) async {
   try {
+    setState(() => task.statusText = "Analyzing...");
+    
+    // ১. সার্ভার থেকে ডাটা আনুন
     final result = await _resolveLink(task.inputUrl);
-
-    // যদি ফরম্যাট লিস্ট থাকে তবে সিলেকশন মেনু দেখাও
-    if (result.containsKey('formats') && result['formats'] != null && result['formats'].isNotEmpty) {
-      _showQualityBottomSheet(task, result['formats'], result['title'], result['thumbnail']);
+    
+    // ২. চেক করুন ফরম্যাট লিস্ট আছে কি না (যদি আপনার ব্যাকএন্ড থেকে লিস্ট আসে)
+    if (result.containsKey('formats') && result['formats'] is List) {
+      // যদি ফরম্যাট লিস্ট থাকে, তবে কোয়ালিটি সিলেকশন দেখান
+      _showQualitySelection(result['formats'], task, result['title'], result['thumbnail']);
     } else {
-      // ফরম্যাট না থাকলে সরাসরি আপনার অরিজিনাল ডাউনলোড লজিকে পাঠিয়ে দাও
-      await _runFinalDownloadSequence(task, result['url'], result['title'], result['thumbnail']);
+      // যদি ফরম্যাট লিস্ট না থাকে, পুরনো পদ্ধতিতে ডাউনলোড শুরু করুন
+      task.downloadUrl = result['url'];
+      task.videoTitle = result['title'] ?? "Video_${task.id}";
+      task.thumbnailUrl = result['thumbnail'];
+      await _prepareDownload(task);
     }
   } catch (e) {
     _handleTaskError(task, e);
   }
 }
 
-void _showQualityBottomSheet(DownloadTask task, List<dynamic> formats, String? title, String? thumb) {
+  Future<void> _prepareDownload(DownloadTask task) async {
+  try {
+    const root = "/storage/emulated/0";
+    final folder = Directory("$root/Download/LinkSyncro");
+    if (!await folder.exists()) await folder.create(recursive: true);
+
+    String cleanName = task.videoTitle!.replaceAll(RegExp(r'[<>:"/\\|?*]'), '').trim();
+    if (cleanName.length > 50) cleanName = cleanName.substring(0, 50).trim();
+    if (cleanName.isEmpty) cleanName = "Video_${task.id}";
+
+    task.savePath = "${folder.path}/$cleanName.mp4";
+    
+    // ডাউনলোড শুরু করুন
+    await _executeDownload(task);
+  } catch (e) {
+    _handleTaskError(task, e);
+  }
+}
+
+void _showQualitySelection(List<dynamic> formats, DownloadTask task, String? title, String? thumbnail) {
+  task.videoTitle = title ?? "Video_${task.id}";
+  task.thumbnailUrl = thumbnail;
+
   showModalBottomSheet(
     context: context,
+    backgroundColor: Theme.of(context).scaffoldBackgroundColor,
+    shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
     builder: (context) {
       return Container(
         padding: const EdgeInsets.all(20),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            const Text("Select Quality", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-            const SizedBox(height: 15),
+            const Text("Select Video Quality", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+            const SizedBox(height: 10),
             ListView.builder(
               shrinkWrap: true,
               itemCount: formats.length,
               itemBuilder: (context, index) {
-                final format = formats[index];
+                final fmt = formats[index];
                 return ListTile(
                   leading: const Icon(Icons.video_library, color: Colors.indigo),
-                  title: Text("${format['quality']} (${format['ext']})"),
+                  title: Text(fmt['resolution'] ?? "Unknown Quality"),
+                  trailing: const Icon(Icons.download_for_offline),
                   onTap: () {
-                    Navigator.pop(context);
-                    // এখানে সিলেক্ট করার পর আপনার অরিজিনাল সিকোয়েন্সটিই শুরু হবে
-                    _runFinalDownloadSequence(task, format['url'], title, thumb);
+                    Navigator.pop(context); // পপ-আপ বন্ধ
+                    task.downloadUrl = fmt['url']; // সিলেক্ট করা URL বসান
+                    _prepareDownload(task); // ডাউনলোড শুরু করুন
                   },
                 );
               },
@@ -218,53 +247,21 @@ void _showQualityBottomSheet(DownloadTask task, List<dynamic> formats, String? t
   );
 }
 
-Future<void> _runFinalDownloadSequence(DownloadTask task, String? url, String? title, String? thumbnail) async {
+
+  Future<Map<String, dynamic>> _resolveLink(String input) async {
   try {
-    // অরিজিনাল স্টেট আপডেট
-    setState(() {
-      task.downloadUrl = url;
-      task.videoTitle = title ?? "Video_${task.id}";
-      task.thumbnailUrl = thumbnail;
-    });
-
-    if (task.downloadUrl == null) throw "Invalid response from server";
-
-    // অরিজিনাল ফোল্ডার লজিক
-    const root = "/storage/emulated/0";
-    final folder = Directory("$root/Download/LinkSyncro");
-    if (!await folder.exists()) await folder.create(recursive: true);
-
-    // --- আপনার অরিজিনাল ফাইল নেম ক্লিনিং এবং লেন্থ লিমিট (Error 36 Fix) ---
-    String cleanName = task.videoTitle!.replaceAll(RegExp(r'[<>:"/\\|?*]'), '').trim();
-    if (cleanName.length > 50) {
-      cleanName = cleanName.substring(0, 50).trim();
-    }
-    if (cleanName.isEmpty) cleanName = "Video_${task.id}";
-    // ---------------------------------------------------------------------
-
-    task.savePath = "${folder.path}/$cleanName.mp4";
-    
-    // অরিজিনাল ডাউনলোড শুরু
-    await _executeDownload(task);
+    // এখন আর কোনো সার্ভিস চেক করতে হবে না, সরাসরি পাইথন ব্যাকএন্ডে কল যাবে
+    return await _apiService.fetchMediaDetails(input);
   } catch (e) {
-    _handleTaskError(task, e);
+    // যদি ব্যাকএন্ড থেকে কোনো এরর আসে
+    throw "Server Error: ${e.toString()}";
   }
 }
 
-  Future<Map<String, dynamic>> _resolveLink(String input) async {
-    if (_ytService.isYouTubeLink(input)) return await _ytService.getVideoDetails(input);
-    if (_fbService.isFacebookLink(input)) return await _fbService.getVideoDetails(input);
-    if (_igService.isInstagramLink(input)) return await _igService.getVideoDetails(input);
-
-    const String proxyUrl = "https://script.google.com/macros/s/AKfycbxsns846mdhcNrberwkvdB12yJ58pVg3yE6b4tbvp6rOWPxdjYvN7xeEDbIfID0_CrqJg/exec";
-    final uri = Uri.parse("$proxyUrl?url=${Uri.encodeComponent(input)}");
-
-    final response = await http.get(uri).timeout(const Duration(seconds: 45));
-    if (response.statusCode == 200) {
-      return jsonDecode(utf8.decode(response.bodyBytes));
-    }
-    throw "Proxy server failed to respond";
-  }
+void _keepServerAlive() {
+  const String proxyUrl = "https://script.google.com/macros/s/AKfycbw_6yrOz6F2umCUlCmPIOFI1xf7d3NMG5NF8gckpwrpsGPRrXVmZaV137P5W27L7nf74g/exec";
+  http.get(Uri.parse(proxyUrl)).catchError((e) => print("Ping failed: $e"));
+}
 
   Future<void> _executeDownload(DownloadTask task) async {
     RandomAccessFile? raf;
@@ -653,7 +650,4 @@ Widget build(BuildContext context) {
       ),
     );
   }
-
- 
-
 }
