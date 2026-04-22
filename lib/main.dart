@@ -7,7 +7,6 @@ import 'package:http/http.dart' as http;
 import 'package:dio/dio.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:media_scanner/media_scanner.dart';
- import 'package:path_provider/path_provider.dart';
 
 // আপনার লোকাল সার্ভিস ফাইলগুলো নিশ্চিত করুন প্রোজেক্টে আছে
 import 'youtube_service.dart';
@@ -176,8 +175,7 @@ class _HomeScreenState extends State<HomeScreen> {
     // ১. রেজল্ভ লিঙ্ক - ডেটা ফেচ করা
     final result = await _resolveLink(task.inputUrl);
     
-     print("DEBUG_FLUTTER: Server Response: $result");
-   
+    // ২. স্টেট আপডেট এবং ডেটা সেফটি চেক
     setState(() {
       // টাইপ কাস্টিং নিরাপদ করা হলো
       task.availableFormats = (result['formats'] is List) ? result['formats'] : null;
@@ -609,12 +607,6 @@ Widget build(BuildContext context) {
   }
 
   void _showQualitySelector(DownloadTask task) {
-  // ১. সেফটি চেক
-  if (task.availableFormats == null || task.availableFormats!.isEmpty) {
-    _proceedToDownload(task); // ফরম্যাট না থাকলে সরাসরি ডিফল্ট ডাউনলোডে চলে যাবে
-    return;
-  }
-
   showModalBottomSheet(
     context: context,
     builder: (context) {
@@ -632,11 +624,11 @@ Widget build(BuildContext context) {
                 final format = task.availableFormats![index];
                 return ListTile(
                   leading: const Icon(Icons.video_file_outlined),
-                  title: Text("${format['height'] ?? 'Auto'}p - ${format['ext'] ?? 'mp4'}"),
+                  title: Text("${format['height']}p - ${format['ext']}"),
                   onTap: () {
-                    Navigator.pop(context);
-                    task.downloadUrl = format['url'];
-                    _proceedToDownload(task);
+                    Navigator.pop(context); // ডায়ালগ বন্ধ করুন
+                    task.downloadUrl = format['url']; // সিলেক্ট করা URL বসান
+                    _proceedToDownload(task); // ডাউনলোড শুরু করুন
                   },
                 );
               },
@@ -648,25 +640,27 @@ Widget build(BuildContext context) {
   );
 }
 
-
 Future<void> _proceedToDownload(DownloadTask task) async {
   try {
-    // সরাসরি পাথ না লিখে সিস্টেম থেকে ডাউনলোডের লোকেশন নিন
-    final directory = await getExternalStorageDirectory(); 
-    // অথবা Directory('/storage/emulated/0/Download/LinkSyncro') ইউজ করতে চাইলে এটি রাখুন:
-    final folder = Directory("/storage/emulated/0/Download/LinkSyncro");
-    
+    const root = "/storage/emulated/0";
+    final folder = Directory("$root/Download/LinkSyncro");
     if (!await folder.exists()) await folder.create(recursive: true);
 
-    String cleanName = task.videoTitle!.replaceAll(RegExp(r'[<>:"/\\|?*]'), '_').trim();
-    if (cleanName.length > 50) cleanName = cleanName.substring(0, 50).trim();
-    
+    // আগের সেই ফাইল নেম ক্লিনিং এবং লেন্থ লিমিট (Error 36 Fix)
+    String cleanName = task.videoTitle!.replaceAll(RegExp(r'[<>:"/\\|?*]'), '').trim();
+    if (cleanName.length > 50) {
+      cleanName = cleanName.substring(0, 50).trim();
+    }
+    if (cleanName.isEmpty) cleanName = "Video_${task.id}";
+
     task.savePath = "${folder.path}/$cleanName.mp4";
     
+    // ডাউনলোড শুরু করুন
     await _executeDownload(task);
   } catch (e) {
     _handleTaskError(task, e);
   }
 }
+
 
 }

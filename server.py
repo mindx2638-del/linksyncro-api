@@ -108,6 +108,7 @@ def extract_media(url: str):
     for cookie_path in cookie_list:
 
         ydl_opts = {
+            "format": "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best",
             "quiet": True,
             "no_warnings": True,
             "noplaylist": True,
@@ -117,7 +118,7 @@ def extract_media(url: str):
             "geo_bypass": True,
             "user_agent": random.choice(USER_AGENTS),
             "http_headers": {
-                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+                "Accept": "/",
                 "Accept-Language": "en-US,en;q=0.5",
                 "Referer": "https://www.google.com/",
             },
@@ -144,19 +145,13 @@ def extract_media(url: str):
                 download_url = info.get("url")
 
                 # -----------------------------
-                # ORIGINAL FALLBACK LOGIC (UNCHANGED)
+                # FALLBACK LOGIC (FIXED)
                 # -----------------------------
                 if not download_url and "formats" in info:
                     valid_formats = [
                         f for f in info["formats"]
-                        if f.get("vcodec") != "none" and f.get("acodec") != "none"
+                        if f.get("url")
                     ]
-
-                    if not valid_formats:
-                        valid_formats = [
-                            f for f in info["formats"]
-                            if f.get("url")
-                        ]
 
                     if valid_formats:
                         valid_formats.sort(
@@ -166,36 +161,39 @@ def extract_media(url: str):
                         download_url = valid_formats[0]["url"]
 
                 # -----------------------------
-                # PROFESSIONAL QUALITY LIST (360p → 4K SAFE)
+                # PROFESSIONAL QUALITY LIST (FIXED)
                 # -----------------------------
                 quality_map = {}
                 quality_list = []
 
                 if "formats" in info:
-
                     for f in info["formats"]:
                         url_f = f.get("url")
                         height = f.get("height")
 
-                        if not url_f or not height:
+                        # শুধু url থাকলেই নিবো
+                        if not url_f:
                             continue
 
-                        # avoid duplicates (same resolution)
+                        # height না থাকলে 0 (Auto)
+                        height = height or 0
+
+                        # duplicate avoid
                         if height in quality_map:
                             continue
 
                         quality_map[height] = {
-                            "quality": f"{height}p",
+                            "quality": f"{height}p" if height else "Auto",
                             "height": height,
                             "url": url_f,
                             "ext": f.get("ext", "mp4"),
                             "filesize": f.get("filesize") or 0
                         }
 
-                # convert dict → list
+                # dict → list
                 quality_list = list(quality_map.values())
 
-                # sort high → low (4K → 360p)
+                # sort high → low
                 quality_list.sort(key=lambda x: x["height"], reverse=True)
 
                 # -----------------------------
@@ -203,27 +201,22 @@ def extract_media(url: str):
                 # -----------------------------
                 if download_url:
 
-                      result = {
-                    "status": "success",
-                    "url": download_url,  # এটি None হতে পারে, সমস্যা নেই
-                    "title": info.get("title", "Video"),
-                    "thumbnail": info.get("thumbnail"),
-                    "duration": info.get("duration"),
-                    "source": info.get("extractor_key", domain),
-                    "formats": quality_list # ফরম্যাট লিস্ট এখানে পাঠানো হচ্ছে
-                }
+                    result = {
+                        "status": "success",
+                        "url": download_url,
+                        "title": info.get("title", "Video"),
+                        "thumbnail": info.get("thumbnail"),
+                        "duration": info.get("duration"),
+                        "source": info.get("extractor_key", domain),
+                        "formats": quality_list
+                    }
 
-                # ডিবাগিং প্রিন্ট (লজিকের ভেতরে)
-                print(f"DEBUG: Data about to be sent. Keys: {result.keys()}")
-                print(f"DEBUG: Formats count: {len(quality_list)}")
+                    cache[cache_key] = (result, time.time())
 
-                # ক্যাশ আপডেট
-                cache[cache_key] = (result, time.time())
+                    if len(cache) > 2000:
+                        cache.pop(next(iter(cache)))
 
-                if len(cache) > 2000:
-                    cache.pop(next(iter(cache)))
-
-                return result
+                    return result
 
         except Exception as e:
             if not cookie_path:
