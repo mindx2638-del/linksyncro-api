@@ -10,5 +10,5 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 
-# এই লাইনে server:app ব্যবহার করবেন
-CMD ["gunicorn", "-w", "4", "-k", "uvicorn.workers.UvicornWorker", "server:app", "--bind", "0.0.0.0:10000"]
+# পোর্টের জায়গায় $PORT ব্যবহার করতে হবে এবং sh -c কমান্ড দিয়ে এটি রান করতে হবে
+CMD sh -c "gunicorn -w 4 -k uvicorn.workers.UvicornWorker server:app --bind 0.0.0.0:$PORT"
