@@ -4,7 +4,7 @@ import 'dart:async';
 
 class FacebookService {
   // API Endpoint (Ensure this matches your FastAPI '/get_media' route)
-  static const String _apiUrl = "https://linksyncro-api-1.onrender.com/get_media";
+  static const String _apiUrl = "https://linksyncro-api.onrender.com/get_media";
   
   // API Key (Must match the key defined in your FastAPI backend)
   static const String _apiKey = "demo_key_123"; 

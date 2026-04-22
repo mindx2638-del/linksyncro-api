@@ -104,45 +104,39 @@ def extract_media(url: str):
 
     for cookie_path in cookie_list:
         ydl_opts = {
-            # ১০৮০পি বা তার নিচে সেরা ভিডিও এবং অডিও খোঁজার জন্য কড়া নির্দেশ
-            "format": "bestvideo[height<=1080]+bestaudio/best[height<=1080]/best",
-            
-            # ডাউনলোড শেষে ভিডিও এবং অডিওকে একসাথে করে MP4 ফরম্যাটে দিবে
-            "merge_output_format": "mp4",
-            
-            # আপনার পিসির FFmpeg পাথ (ঠিক আছে)
-            "ffmpeg_location": r"C:\ffmpeg\bin", 
-            
-            "quiet": False, 
-            "no_warnings": True,
-            "noplaylist": True,
-            "socket_timeout": 60,
-            "retries": 10,
-            "nocheckcertificate": True,
-            "geo_bypass": True,
-            "user_agent": random.choice(USER_AGENTS),
-            "http_headers": {
-                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
-                "Accept-Language": "en-US,en;q=0.5",
-                "Referer": "https://www.google.com/",
-            },
-            "extractor_args": {
-                # এখানে player_client এ শুধু 'web' রাখা বেশি নিরাপদ, কারণ এটি পিসি ব্রাউজারকে নির্দেশ করে
-                "youtube": {"player_client": ["web"], "player_skip": ["webpage", "configs"]},
-                "instagram": {"force_subtitles": False},
-                "facebook": {"force_generic_extractor": False}
-            }
-        }
+    # 1080p পর্যন্ত বেস্ট ভিডিও এবং অডিও আলাদা করে ডাউনলোড করবে, তারপর FFmpeg দিয়ে মার্জ করবে
+    "format": "bestvideo[height<=1080]+bestaudio/best[height<=1080]",
+    "merge_output_format": "mp4", # এটি নিশ্চিত করবে যে আউটপুট ফাইলটি শেষ পর্যন্ত MP4 হবে
+    "quiet": True,
+    "no_warnings": True,
+    "noplaylist": True,
+    "socket_timeout": 45,
+    "retries": 10,
+    "nocheckcertificate": True,
+    "geo_bypass": True,
+    "user_agent": random.choice(USER_AGENTS),
+    "http_headers": {
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.5",
+        "Referer": "https://www.google.com/",
+    },
+    "extractor_args": {
+        "youtube": {"player_client": ["android", "ios", "mweb", "tv"], "player_skip": ["webpage", "configs"]},
+        "instagram": {"force_subtitles": False},
+        "facebook": {"force_generic_extractor": False}
+    }
+}
 
         if cookie_path:
             ydl_opts["cookiefile"] = cookie_path
             logging.info(f"Attempting with Cookie: {cookie_path}")
         else:
             logging.info(f"Attempting WITHOUT cookies for: {url}")
-            try:
-                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                  info = ydl.extract_info(url, download=False)
-                 
+
+        try:
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                info = ydl.extract_info(url, download=False)
+                
                 download_url = info.get("url")
                 
                 # আপনার অরিজিনাল ফরম্যাট সিলেকশন লজিক (পুরোটা একই রাখা হয়েছে)
@@ -171,8 +165,8 @@ def extract_media(url: str):
                     
                     return result
                     
-            except Exception as e:
-             if not cookie_path:
+        except Exception as e:
+            if not cookie_path:
                 logging.warning(f"Failed without cookies. Error: {str(e)}")
             else:
                 logging.error(f"Failed with cookie {cookie_path}: {str(e)}")
