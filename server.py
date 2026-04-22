@@ -169,36 +169,40 @@ def extract_media(url: str):
                 # -----------------------------
                 # PROFESSIONAL QUALITY LIST (360p → 4K SAFE)
                 # -----------------------------
-                quality_map = {}
-                quality_list = []
+                formats = info.get("formats") or []
 
-                formats = info.get("formats", [])
+                quality_map = {}
 
                 for f in formats:
                  url_f = f.get("url")
-                 height = f.get("height")
 
-                 if not url_f:
-                   continue
+                # YouTube/Facebook HLS fallback fix
+                if not url_f and f.get("manifest_url"):
+                 url_f = f.get("manifest_url")
 
-                   # auto height fallback
-                 height = height or 0
+                if not url_f:
+                 continue
 
-                # skip duplicates
-                 if height in quality_map:
-                   continue
+                height = f.get("height") or f.get("format_id") or 0
 
-                 quality_map[height] = {
-                 "quality": f"{height}p" if height else "Auto",
-                   "height": height,
+               # duplicate safe key (important fix)
+                key = str(height) + str(f.get("ext"))
+
+                if key in quality_map:
+                  continue
+
+                  quality_map[key] = {
+                  "quality": f"{height}p" if height else "Auto",
+                  "height": height,
                   "url": url_f,
                   "ext": f.get("ext", "mp4"),
-                  "filesize": f.get("filesize") or 0
+                    "filesize": f.get("filesize") or 0
                    }
 
                 quality_list = list(quality_map.values())
                 quality_list.sort(key=lambda x: x["height"], reverse=True)
 
+                download_url = quality_list[0]["url"] if quality_list else info.get("url")
                # best fallback download url (highest quality)
                 download_url = quality_list[0]["url"] if quality_list else None
 
