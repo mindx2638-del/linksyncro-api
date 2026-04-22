@@ -203,24 +203,27 @@ def extract_media(url: str):
                 # -----------------------------
                 if download_url:
 
-                    result = {
-                        "status": "success",
-                        "url": download_url,
-                        "title": info.get("title", "Video"),
-                        "thumbnail": info.get("thumbnail"),
-                        "duration": info.get("duration"),
-                        "source": info.get("extractor_key", domain),
+                      result = {
+                    "status": "success",
+                    "url": download_url,  # এটি None হতে পারে, সমস্যা নেই
+                    "title": info.get("title", "Video"),
+                    "thumbnail": info.get("thumbnail"),
+                    "duration": info.get("duration"),
+                    "source": info.get("extractor_key", domain),
+                    "formats": quality_list # ফরম্যাট লিস্ট এখানে পাঠানো হচ্ছে
+                }
 
-                        # UI FRIENDLY QUALITY LIST
-                        "formats": quality_list
-                    }
+                # ডিবাগিং প্রিন্ট (লজিকের ভেতরে)
+                print(f"DEBUG: Data about to be sent. Keys: {result.keys()}")
+                print(f"DEBUG: Formats count: {len(quality_list)}")
 
-                    cache[cache_key] = (result, time.time())
+                # ক্যাশ আপডেট
+                cache[cache_key] = (result, time.time())
 
-                    if len(cache) > 2000:
-                        cache.pop(next(iter(cache)))
+                if len(cache) > 2000:
+                    cache.pop(next(iter(cache)))
 
-                    return result
+                return result
 
         except Exception as e:
             if not cookie_path:
