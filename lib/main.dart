@@ -609,26 +609,40 @@ Widget build(BuildContext context) {
   void _showQualitySelector(DownloadTask task) {
   showModalBottomSheet(
     context: context,
+    backgroundColor: Theme.of(context).scaffoldBackgroundColor,
+    shape: const RoundedRectangleBorder(
+      borderRadius: BorderRadius.vertical(top: Radius.circular(25)),
+    ),
     builder: (context) {
       return Container(
-        padding: const EdgeInsets.all(20),
+        padding: const EdgeInsets.symmetric(vertical: 20),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            const Text("Select Quality", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+            const Text(
+              "Select Quality", 
+              style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)
+            ),
             const Divider(),
             ListView.builder(
               shrinkWrap: true,
               itemCount: task.availableFormats!.length,
               itemBuilder: (context, index) {
                 final format = task.availableFormats![index];
+                // ব্যাকএন্ড থেকে আসা ফরম্যাটেড স্ট্রিং 'quality' ব্যবহার করছি
+                final String qualityLabel = format['quality'] ?? "${format['height']}p";
+                final int sizeBytes = format['filesize'] ?? 0;
+                final String sizeMB = (sizeBytes / (1024 * 1024)).toStringAsFixed(1);
+
                 return ListTile(
-                  leading: const Icon(Icons.video_file_outlined),
-                  title: Text("${format['height']}p - ${format['ext']}"),
+                  leading: const Icon(Icons.video_collection_outlined, color: Colors.indigo),
+                  title: Text(qualityLabel, style: const TextStyle(fontWeight: FontWeight.w600)),
+                  subtitle: sizeBytes > 0 ? Text("$sizeMB MB") : null,
+                  trailing: const Icon(Icons.arrow_forward_ios_rounded, size: 14),
                   onTap: () {
-                    Navigator.pop(context); // ডায়ালগ বন্ধ করুন
-                    task.downloadUrl = format['url']; // সিলেক্ট করা URL বসান
-                    _proceedToDownload(task); // ডাউনলোড শুরু করুন
+                    Navigator.pop(context);
+                    task.downloadUrl = format['url']; 
+                    _proceedToDownload(task); 
                   },
                 );
               },

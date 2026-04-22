@@ -90,6 +90,9 @@ def get_cookie_files(domain):
 # -----------------------------
 def extract_media(url: str):
 
+    # -----------------------------
+    # CACHE CHECK (UNCHANGED)
+    # -----------------------------
     cache_key = hashlib.md5(url.encode()).hexdigest()
     if cache_key in cache:
         data, ts = cache[cache_key]
@@ -105,7 +108,7 @@ def extract_media(url: str):
     for cookie_path in cookie_list:
 
         ydl_opts = {
-            "format": "bestvideo+bestaudio/best",
+            "format": "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best",
             "quiet": True,
             "no_warnings": True,
             "noplaylist": True,
@@ -115,90 +118,120 @@ def extract_media(url: str):
             "geo_bypass": True,
             "user_agent": random.choice(USER_AGENTS),
             "http_headers": {
-                "Accept": "/",
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
                 "Accept-Language": "en-US,en;q=0.5",
                 "Referer": "https://www.google.com/",
             },
             "extractor_args": {
                 "youtube": {
-                    "player_client": ["android", "web", "mweb"],
+                    "player_client": ["android", "ios", "mweb", "tv"],
+                    "player_skip": ["webpage", "configs"]
                 },
-                "facebook": {
-                    "skip": ["dash", "hls"]
-                }
+                "instagram": {"force_subtitles": False},
+                "facebook": {"force_generic_extractor": False}
             }
         }
 
         if cookie_path:
             ydl_opts["cookiefile"] = cookie_path
+            logging.info(f"Attempting with Cookie: {cookie_path}")
+        else:
+            logging.info(f"Attempting WITHOUT cookies for: {url}")
 
         try:
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 info = ydl.extract_info(url, download=False)
 
-                formats = info.get("formats", [])
+                download_url = info.get("url")
 
+                # -----------------------------
+                # ORIGINAL FALLBACK LOGIC (UNCHANGED)
+                # -----------------------------
+                if not download_url and "formats" in info:
+                    valid_formats = [
+                        f for f in info["formats"]
+                        if f.get("vcodec") != "none" and f.get("acodec") != "none"
+                    ]
+
+                    if not valid_formats:
+                        valid_formats = [
+                            f for f in info["formats"]
+                            if f.get("url")
+                        ]
+
+                    if valid_formats:
+                        valid_formats.sort(
+                            key=lambda x: (x.get("height") or 0),
+                            reverse=True
+                        )
+                        download_url = valid_formats[0]["url"]
+
+                # -----------------------------
+                # PROFESSIONAL QUALITY LIST (360p → 4K SAFE)
+                # -----------------------------
                 quality_map = {}
+                
+                if "formats" in info:
+                    for f in info["formats"]:
+                        url_f = f.get("url")
+                        # height না থাকলে ডিফল্ট হিসেবে 0 বা 'Unknown' ধরুন
+                        height = f.get("height") or 0
+                        ext = f.get("ext", "mp4")
 
-                for f in formats:
-                    url_f = f.get("url")
-                    height = f.get("height") or 0
+                        # যদি url না থাকে তবে এটি কাজ করবে না, তাই শুধু এটি চেক করুন
+                        if not url_f:
+                            continue
 
-                    if not url_f:
-                        continue
+                        # ফরম্যাট আইডি বা রেজল্যুশন দিয়ে ইউনিক কি তৈরি করুন যেন ডুপ্লিকেট না হয়
+                        key = f"{height}_{ext}"
+                        
+                        if key not in quality_map:
+                            quality_map[key] = {
+                                "quality": f"{height}p ({ext.upper()})" if height > 0 else f"Auto ({ext.upper()})",
+                                "height": height,
+                                "url": url_f,
+                                "ext": ext,
+                                "filesize": f.get("filesize") or 0
+                            }
 
-                    # skip duplicates
-                    if height in quality_map:
-                        continue
+                # convert dict → list
+                quality_list = list(quality_map.values())
 
-                    quality_map[height] = {
-                        "quality": f"{height}p" if height else "Auto",
-                        "height": height,
-                        "url": url_f,
-                        "ext": f.get("ext", "mp4"),
-                        "filesize": f.get("filesize") or 0
+                # sort high → low
+                quality_list.sort(key=lambda x: x["height"], reverse=True)
+
+                # -----------------------------
+                # RESULT
+                # -----------------------------
+                if download_url:
+
+                    result = {
+                        "status": "success",
+                        "url": download_url,
+                        "title": info.get("title", "Video"),
+                        "thumbnail": info.get("thumbnail"),
+                        "duration": info.get("duration"),
+                        "source": info.get("extractor_key", domain),
+
+                        # UI FRIENDLY QUALITY LIST
+                        "formats": quality_list
                     }
 
-                quality_list = sorted(
-                    quality_map.values(),
-                    key=lambda x: x["height"],
-                    reverse=True
-                )
+                    cache[cache_key] = (result, time.time())
 
-                # 🔥 IMPORTANT FIX: fallback safe URL
-                download_url = None
+                    if len(cache) > 2000:
+                        cache.pop(next(iter(cache)))
 
-                if quality_list:
-                    download_url = quality_list[0]["url"]
-                else:
-                    download_url = info.get("url")
-
-                if not download_url:
-                    continue
-
-                result = {
-                    "status": "success",
-                    "url": download_url,
-                    "title": info.get("title", "Video"),
-                    "thumbnail": info.get("thumbnail"),
-                    "duration": info.get("duration"),
-                    "source": info.get("extractor_key", domain),
-                    "formats": quality_list
-                }
-
-                cache[cache_key] = (result, time.time())
-
-                if len(cache) > 2000:
-                    cache.pop(next(iter(cache)))
-
-                return result
+                    return result
 
         except Exception as e:
-            logging.error(f"Extract error: {str(e)}")
+            if not cookie_path:
+                logging.warning(f"Failed without cookies. Error: {str(e)}")
+            else:
+                logging.error(f"Failed with cookie {cookie_path}: {str(e)}")
             continue
 
     return None
-
 
 
 # -----------------------------
