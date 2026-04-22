@@ -103,10 +103,16 @@ def extract_media(url: str):
     cookie_list.extend(get_cookie_files(domain))
 
     for cookie_path in cookie_list:
-         ydl_opts = {
-            "format": "bestvideo+bestaudio/best",
+        ydl_opts = {
+            # ১০৮০পি বা তার নিচে সেরা ভিডিও এবং অডিও খোঁজার জন্য কড়া নির্দেশ
+            "format": "bestvideo[height<=1080]+bestaudio/best[height<=1080]/best",
+            
+            # ডাউনলোড শেষে ভিডিও এবং অডিওকে একসাথে করে MP4 ফরম্যাটে দিবে
             "merge_output_format": "mp4",
-            "ffmpeg_location": r"C:\ffmpeg\bin", # আপনার পিসিতে ffmpeg যেখানে ইনস্টল করেছেন, সেই পাথটি এখানে দিন
+            
+            # আপনার পিসির FFmpeg পাথ (ঠিক আছে)
+            "ffmpeg_location": r"C:\ffmpeg\bin", 
+            
             "quiet": False, 
             "no_warnings": True,
             "noplaylist": True,
@@ -121,16 +127,17 @@ def extract_media(url: str):
                 "Referer": "https://www.google.com/",
             },
             "extractor_args": {
-                "youtube": {"player_client": ["android", "ios", "mweb", "tv"], "player_skip": ["webpage", "configs"]},
+                # এখানে player_client এ শুধু 'web' রাখা বেশি নিরাপদ, কারণ এটি পিসি ব্রাউজারকে নির্দেশ করে
+                "youtube": {"player_client": ["web"], "player_skip": ["webpage", "configs"]},
                 "instagram": {"force_subtitles": False},
                 "facebook": {"force_generic_extractor": False}
             }
         }
 
-         if cookie_path:
+        if cookie_path:
             ydl_opts["cookiefile"] = cookie_path
             logging.info(f"Attempting with Cookie: {cookie_path}")
-         else:
+        else:
             logging.info(f"Attempting WITHOUT cookies for: {url}")
             try:
                 with yt_dlp.YoutubeDL(ydl_opts) as ydl:
