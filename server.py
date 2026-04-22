@@ -90,9 +90,6 @@ def get_cookie_files(domain):
 # -----------------------------
 def extract_media(url: str):
 
-    # -----------------------------
-    # CACHE CHECK (UNCHANGED)
-    # -----------------------------
     cache_key = hashlib.md5(url.encode()).hexdigest()
     if cache_key in cache:
         data, ts = cache[cache_key]
@@ -108,7 +105,7 @@ def extract_media(url: str):
     for cookie_path in cookie_list:
 
         ydl_opts = {
-            "format": "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best",
+            "format": "bestvideo+bestaudio/best",
             "quiet": True,
             "no_warnings": True,
             "noplaylist": True,
@@ -118,126 +115,90 @@ def extract_media(url: str):
             "geo_bypass": True,
             "user_agent": random.choice(USER_AGENTS),
             "http_headers": {
-                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+                "Accept": "/",
                 "Accept-Language": "en-US,en;q=0.5",
                 "Referer": "https://www.google.com/",
             },
             "extractor_args": {
                 "youtube": {
-                    "player_client": ["android", "ios", "mweb", "tv"],
-                    "player_skip": ["webpage", "configs"]
+                    "player_client": ["android", "web", "mweb"],
                 },
-                "instagram": {"force_subtitles": False},
-                "facebook": {"force_generic_extractor": False}
+                "facebook": {
+                    "skip": ["dash", "hls"]
+                }
             }
         }
 
         if cookie_path:
             ydl_opts["cookiefile"] = cookie_path
-            logging.info(f"Attempting with Cookie: {cookie_path}")
-        else:
-            logging.info(f"Attempting WITHOUT cookies for: {url}")
 
         try:
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 info = ydl.extract_info(url, download=False)
 
-                download_url = info.get("url")
-
-                # -----------------------------
-                # ORIGINAL FALLBACK LOGIC (UNCHANGED)
-                # -----------------------------
-                if not download_url and "formats" in info:
-                    valid_formats = [
-                        f for f in info["formats"]
-                        if f.get("vcodec") != "none" and f.get("acodec") != "none"
-                    ]
-
-                    if not valid_formats:
-                        valid_formats = [
-                            f for f in info["formats"]
-                            if f.get("url")
-                        ]
-
-                    if valid_formats:
-                        valid_formats.sort(
-                            key=lambda x: (x.get("height") or 0),
-                            reverse=True
-                        )
-                        download_url = valid_formats[0]["url"]
-
-                # -----------------------------
-                # PROFESSIONAL QUALITY LIST (360p → 4K SAFE)
-                # -----------------------------
-                formats = info.get("formats") or []
+                formats = info.get("formats", [])
 
                 quality_map = {}
 
                 for f in formats:
-                 url_f = f.get("url")
+                    url_f = f.get("url")
+                    height = f.get("height") or 0
 
-                # YouTube/Facebook HLS fallback fix
-                if not url_f and f.get("manifest_url"):
-                 url_f = f.get("manifest_url")
+                    if not url_f:
+                        continue
 
-                if not url_f:
-                 continue
+                    # skip duplicates
+                    if height in quality_map:
+                        continue
 
-                height = f.get("height") or f.get("format_id") or 0
-
-               # duplicate safe key (important fix)
-                key = str(height) + str(f.get("ext"))
-
-                if key in quality_map:
-                  continue
-
-                  quality_map[key] = {
-                  "quality": f"{height}p" if height else "Auto",
-                  "height": height,
-                  "url": url_f,
-                  "ext": f.get("ext", "mp4"),
-                    "filesize": f.get("filesize") or 0
-                   }
-
-                quality_list = list(quality_map.values())
-                quality_list.sort(key=lambda x: x["height"], reverse=True)
-
-                download_url = quality_list[0]["url"] if quality_list else info.get("url")
-               # best fallback download url (highest quality)
-                download_url = quality_list[0]["url"] if quality_list else None
-
-                # -----------------------------
-                # RESULT
-                # -----------------------------
-                if download_url:
-
-                    result = {
-                        "status": "success",
-                        "url": download_url,
-                        "title": info.get("title", "Video"),
-                        "thumbnail": info.get("thumbnail"),
-                        "duration": info.get("duration"),
-                        "source": info.get("extractor_key", domain),
-
-                        # UI FRIENDLY QUALITY LIST
-                        "formats": quality_list
+                    quality_map[height] = {
+                        "quality": f"{height}p" if height else "Auto",
+                        "height": height,
+                        "url": url_f,
+                        "ext": f.get("ext", "mp4"),
+                        "filesize": f.get("filesize") or 0
                     }
 
-                    cache[cache_key] = (result, time.time())
+                quality_list = sorted(
+                    quality_map.values(),
+                    key=lambda x: x["height"],
+                    reverse=True
+                )
 
-                    if len(cache) > 2000:
-                        cache.pop(next(iter(cache)))
+                # 🔥 IMPORTANT FIX: fallback safe URL
+                download_url = None
 
-                    return result
+                if quality_list:
+                    download_url = quality_list[0]["url"]
+                else:
+                    download_url = info.get("url")
+
+                if not download_url:
+                    continue
+
+                result = {
+                    "status": "success",
+                    "url": download_url,
+                    "title": info.get("title", "Video"),
+                    "thumbnail": info.get("thumbnail"),
+                    "duration": info.get("duration"),
+                    "source": info.get("extractor_key", domain),
+                    "formats": quality_list
+                }
+
+                cache[cache_key] = (result, time.time())
+
+                if len(cache) > 2000:
+                    cache.pop(next(iter(cache)))
+
+                return result
 
         except Exception as e:
-            if not cookie_path:
-                logging.warning(f"Failed without cookies. Error: {str(e)}")
-            else:
-                logging.error(f"Failed with cookie {cookie_path}: {str(e)}")
+            logging.error(f"Extract error: {str(e)}")
             continue
 
     return None
+
 
 
 # -----------------------------
