@@ -104,28 +104,28 @@ def extract_media(url: str):
 
     for cookie_path in cookie_list:
         ydl_opts = {
-    # 1080p পর্যন্ত বেস্ট ভিডিও এবং অডিও আলাদা করে ডাউনলোড করবে, তারপর FFmpeg দিয়ে মার্জ করবে
-    "format": "bestvideo[height<=1080]+bestaudio/best[height<=1080]",
-    "merge_output_format": "mp4", # এটি নিশ্চিত করবে যে আউটপুট ফাইলটি শেষ পর্যন্ত MP4 হবে
-    "quiet": True,
-    "no_warnings": True,
-    "noplaylist": True,
-    "socket_timeout": 45,
-    "retries": 10,
-    "nocheckcertificate": True,
-    "geo_bypass": True,
-    "user_agent": random.choice(USER_AGENTS),
-    "http_headers": {
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
-        "Accept-Language": "en-US,en;q=0.5",
-        "Referer": "https://www.google.com/",
-    },
-    "extractor_args": {
-        "youtube": {"player_client": ["android", "ios", "mweb", "tv"], "player_skip": ["webpage", "configs"]},
-        "instagram": {"force_subtitles": False},
-        "facebook": {"force_generic_extractor": False}
-    }
-}
+            # ফরমেট লজিক আপনার দেওয়াটাই রাখা হয়েছে (MP4 priority)
+            "format": "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best",
+            "quiet": True,
+            "no_warnings": True,
+            "noplaylist": True,
+            "socket_timeout": 45,
+            "retries": 10, # আরও স্টেবল করার জন্য বাড়ানো হয়েছে
+            "nocheckcertificate": True,
+            "geo_bypass": True,
+            "user_agent": random.choice(USER_AGENTS),
+            "http_headers": {
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+                "Accept-Language": "en-US,en;q=0.5",
+                "Referer": "https://www.google.com/",
+            },
+            "extractor_args": {
+                # এখানে Android এবং iOS ক্লায়েন্ট যোগ করা হয়েছে যাতে মোবাইলে লিঙ্ক প্লে হয়
+                "youtube": {"player_client": ["android", "ios", "mweb", "tv"], "player_skip": ["webpage", "configs"]},
+                "instagram": {"force_subtitles": False},
+                "facebook": {"force_generic_extractor": False}
+            }
+        }
 
         if cookie_path:
             ydl_opts["cookiefile"] = cookie_path

@@ -11,7 +11,7 @@ class InstagramService {
   Future<Map<String, dynamic>> getVideoDetails(String url) async {
     try {
       // পরিবর্তন: URL এর শেষে /get_media যোগ করা হয়েছে
-      const String pythonApiUrl = "https://linksyncro-api.onrender.com/get_media"; 
+      const String pythonApiUrl = "https://linksyncro-api-1.onrender.com/get_media"; 
       
       final uri = Uri.parse("$pythonApiUrl?url=${Uri.encodeComponent(url)}");
 
