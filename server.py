@@ -118,7 +118,7 @@ def extract_media(url: str):
             "geo_bypass": True,
             "user_agent": random.choice(USER_AGENTS),
             "http_headers": {
-                "Accept": "/",
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
                 "Accept-Language": "en-US,en;q=0.5",
                 "Referer": "https://www.google.com/",
             },
@@ -145,13 +145,19 @@ def extract_media(url: str):
                 download_url = info.get("url")
 
                 # -----------------------------
-                # FALLBACK LOGIC (FIXED)
+                # ORIGINAL FALLBACK LOGIC (UNCHANGED)
                 # -----------------------------
                 if not download_url and "formats" in info:
                     valid_formats = [
                         f for f in info["formats"]
-                        if f.get("url")
+                        if f.get("vcodec") != "none" and f.get("acodec") != "none"
                     ]
+
+                    if not valid_formats:
+                        valid_formats = [
+                            f for f in info["formats"]
+                            if f.get("url")
+                        ]
 
                     if valid_formats:
                         valid_formats.sort(
@@ -161,40 +167,40 @@ def extract_media(url: str):
                         download_url = valid_formats[0]["url"]
 
                 # -----------------------------
-                # PROFESSIONAL QUALITY LIST (FIXED)
+                # PROFESSIONAL QUALITY LIST (360p → 4K SAFE)
                 # -----------------------------
                 quality_map = {}
                 quality_list = []
 
-                if "formats" in info:
-                    for f in info["formats"]:
-                        url_f = f.get("url")
-                        height = f.get("height")
+                formats = info.get("formats", [])
 
-                        # শুধু url থাকলেই নিবো
-                        if not url_f:
-                            continue
+                for f in formats:
+                 url_f = f.get("url")
+                 height = f.get("height")
 
-                        # height না থাকলে 0 (Auto)
-                        height = height or 0
+                 if not url_f:
+                   continue
 
-                        # duplicate avoid
-                        if height in quality_map:
-                            continue
+                   # auto height fallback
+                 height = height or 0
 
-                        quality_map[height] = {
-                            "quality": f"{height}p" if height else "Auto",
-                            "height": height,
-                            "url": url_f,
-                            "ext": f.get("ext", "mp4"),
-                            "filesize": f.get("filesize") or 0
-                        }
+                # skip duplicates
+                 if height in quality_map:
+                   continue
 
-                # dict → list
+                 quality_map[height] = {
+                 "quality": f"{height}p" if height else "Auto",
+                   "height": height,
+                  "url": url_f,
+                  "ext": f.get("ext", "mp4"),
+                  "filesize": f.get("filesize") or 0
+                   }
+
                 quality_list = list(quality_map.values())
-
-                # sort high → low
                 quality_list.sort(key=lambda x: x["height"], reverse=True)
+
+               # best fallback download url (highest quality)
+                download_url = quality_list[0]["url"] if quality_list else None
 
                 # -----------------------------
                 # RESULT
@@ -208,6 +214,8 @@ def extract_media(url: str):
                         "thumbnail": info.get("thumbnail"),
                         "duration": info.get("duration"),
                         "source": info.get("extractor_key", domain),
+
+                        # UI FRIENDLY QUALITY LIST
                         "formats": quality_list
                     }
 
