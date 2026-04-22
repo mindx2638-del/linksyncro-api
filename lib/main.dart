@@ -1,4 +1,4 @@
-import 'dart:io';
+Import 'dart:io';
 import 'dart:convert';
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
@@ -208,7 +208,7 @@ class _HomeScreenState extends State<HomeScreen> {
     if (_fbService.isFacebookLink(input)) return await _fbService.getVideoDetails(input);
     if (_igService.isInstagramLink(input)) return await _igService.getVideoDetails(input);
 
-    const String proxyUrl = "https://script.google.com/macros/s/AKfycbyNxJVaHW04TMt9iy739kxZj0DnyjePBSbsnb4K6kOIcbfxlH7Y27bmPhrCvFy1YBwP1w/exec";
+    const String proxyUrl = "https://script.google.com/macros/s/AKfycbxsns846mdhcNrberwkvdB12yJ58pVg3yE6b4tbvp6rOWPxdjYvN7xeEDbIfID0_CrqJg/exec";
     final uri = Uri.parse("$proxyUrl?url=${Uri.encodeComponent(input)}");
 
     final response = await http.get(uri).timeout(const Duration(seconds: 45));
@@ -515,7 +515,7 @@ Widget build(BuildContext context) {
           BoxShadow(
             color: Colors.black.withOpacity(0.03),
             blurRadius: 15,
-            offset: const Offset(0, 8),
+            offset: const Offset(0, 😎,
           )
         ],
       ),
@@ -589,7 +589,7 @@ Widget build(BuildContext context) {
               valueColor: AlwaysStoppedAnimation(task.isFinished ? Colors.greenAccent : Colors.indigo),
             ),
           ),
-          const SizedBox(height: 8),
+          const SizedBox(height: 😎,
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
@@ -606,16 +606,27 @@ Widget build(BuildContext context) {
     );
   }
 
-  void _showQualitySelector(DownloadTask task) {
+ void _showQualitySelector(DownloadTask task) {
+  // ১. সেফটি চেক: যদি লিস্ট খালি বা নাল হয়, তবে পপআপ দেখানোর দরকার নেই
+  if (task.availableFormats == null || task.availableFormats!.isEmpty) {
+    _showToast("No quality options available", isError: true);
+    return;
+  }
+
   showModalBottomSheet(
     context: context,
+    shape: const RoundedRectangleBorder(
+      borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+    ),
     builder: (context) {
       return Container(
         padding: const EdgeInsets.all(20),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            const Text("Select Quality", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+            const Text("Select Quality", 
+              style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)
+            ),
             const Divider(),
             ListView.builder(
               shrinkWrap: true,
@@ -623,11 +634,14 @@ Widget build(BuildContext context) {
               itemBuilder: (context, index) {
                 final format = task.availableFormats![index];
                 return ListTile(
-                  leading: const Icon(Icons.video_file_outlined),
+                  leading: const Icon(Icons.video_file_outlined, color: Colors.indigo),
                   title: Text("${format['height']}p - ${format['ext']}"),
+                  subtitle: format['filesize'] != null 
+                    ? Text("${(format['filesize'] / 1024 / 1024).toStringAsFixed(1)} MB") 
+                    : null,
                   onTap: () {
                     Navigator.pop(context); // ডায়ালগ বন্ধ করুন
-                    task.downloadUrl = format['url']; // সিলেক্ট করা URL বসান
+                    task.downloadUrl = format['url'];
                     _proceedToDownload(task); // ডাউনলোড শুরু করুন
                   },
                 );
