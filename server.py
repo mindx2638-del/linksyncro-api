@@ -89,9 +89,8 @@ def get_cookie_files(domain):
 # CORE ENGINE
 # -----------------------------
 def extract_media(url: str):
+    # Cache check
     cache_key = hashlib.md5(url.encode()).hexdigest()
-
-    # ---------------- CACHE ----------------
     if cache_key in cache:
         data, ts = cache[cache_key]
         if time.time() - ts < CACHE_TTL:
@@ -103,26 +102,26 @@ def extract_media(url: str):
     cookie_list = [None]
     cookie_list.extend(get_cookie_files(domain))
 
-    # ---------------- TRY COOKIES LOOP ----------------
+    # 🔥 HD priority format system
+    format_priority = [
+        "bestvideo[height>=1080]+bestaudio/best[height>=1080]",
+        "bestvideo[height>=720]+bestaudio/best[height>=720]",
+        "bestvideo+bestaudio/best",
+        "best"
+    ]
+
     for cookie_path in cookie_list:
 
         ydl_opts = {
-            # 🔥 HIGH QUALITY FIX (720p - 1080p priority)
-            "format": (
-                "bestvideo[height>=1080][ext=mp4]+bestaudio[ext=m4a]/"
-                "bestvideo[height>=720][ext=mp4]+bestaudio[ext=m4a]/"
-                "bestvideo+bestaudio/"
-                "best[ext=mp4]/best"
-            ),
-
+            "format": "/".join(format_priority),
             "merge_output_format": "mp4",
+
             "quiet": True,
             "no_warnings": True,
             "noplaylist": True,
 
-            "socket_timeout": 45,
+            "socket_timeout": 60,
             "retries": 10,
-            "fragment_retries": 10,
 
             "nocheckcertificate": True,
             "geo_bypass": True,
@@ -130,19 +129,15 @@ def extract_media(url: str):
             "user_agent": random.choice(USER_AGENTS),
 
             "http_headers": {
-                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-                "Accept-Language": "en-US,en;q=0.5",
+                "Accept": "/",
+                "Accept-Language": "en-US,en;q=0.9",
                 "Referer": "https://www.google.com/",
             },
 
-            # YouTube client stability fix
             "extractor_args": {
                 "youtube": {
                     "player_client": ["android", "ios", "web"],
-                    "player_skip": ["configs"]
-                },
-                "instagram": {"force_subtitles": False},
-                "facebook": {"force_generic_extractor": False}
+                }
             }
         }
 
@@ -153,18 +148,20 @@ def extract_media(url: str):
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 info = ydl.extract_info(url, download=False)
 
-                download_url = None
-                selected_format = None
+                # 🎯 Best URL extraction (HD fallback safe)
+                download_url = info.get("url")
 
-                # ---------------- FORCE BEST FORMAT PICK ----------------
-                if "formats" in info and info["formats"]:
+                if not download_url and "formats" in info:
                     formats = info["formats"]
 
-                    # remove broken formats
-                    formats = [f for f in formats if f.get("url")]
+                    # filter valid formats
+                    valid_formats = [
+                        f for f in formats
+                        if f.get("url") and f.get("vcodec") != "none"
+                    ]
 
-                    # prefer mp4 + height
-                    formats.sort(
+                    # sort by quality (height + bitrate)
+                    valid_formats.sort(
                         key=lambda x: (
                             x.get("height") or 0,
                             x.get("tbr") or 0
@@ -172,51 +169,33 @@ def extract_media(url: str):
                         reverse=True
                     )
 
-                    # pick 1080p or best available >=720
-                    for f in formats:
-                        if f.get("height") and f.get("height") >= 720:
-                            download_url = f["url"]
-                            selected_format = f
-                            break
+                    if valid_formats:
+                        download_url = valid_formats[0]["url"]
 
-                    # fallback
-                    if not download_url and formats:
-                        download_url = formats[0]["url"]
-                        selected_format = formats[0]
+                if download_url:
+                    result = {
+                        "status": "success",
+                        "url": download_url,
+                        "title": info.get("title", "Video"),
+                        "thumbnail": info.get("thumbnail"),
+                        "duration": info.get("duration"),
+                        "quality": "HD optimized",
+                        "source": info.get("extractor_key", domain)
+                    }
 
-                # fallback (sometimes direct url exists)
-                if not download_url:
-                    download_url = info.get("url")
+                    cache[cache_key] = (result, time.time())
 
-                if not download_url:
-                    continue
+                    if len(cache) > 2000:
+                        cache.pop(next(iter(cache)))
 
-                result = {
-                    "status": "success",
-                    "url": download_url,
-                    "title": info.get("title", "Video"),
-                    "thumbnail": info.get("thumbnail"),
-                    "duration": info.get("duration"),
-
-                    # quality info add (useful for debug/app UI)
-                    "height": selected_format.get("height") if selected_format else None,
-                    "format_id": selected_format.get("format_id") if selected_format else None,
-
-                    "source": info.get("extractor_key", domain)
-                }
-
-                cache[cache_key] = (result, time.time())
-
-                if len(cache) > 2000:
-                    cache.pop(next(iter(cache)))
-
-                return result
+                    return result
 
         except Exception as e:
-            logging.warning(f"Failed {cookie_path}: {str(e)}")
+            logging.warning(f"Failed ({cookie_path}): {str(e)}")
             continue
 
     return None
+
 
 # -----------------------------
 # ROUTES
