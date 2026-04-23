@@ -104,8 +104,8 @@ def extract_media(url: str):
 
     for cookie_path in cookie_list:
         ydl_opts = {
-            # ফরমেট লজিক আপনার দেওয়াটাই রাখা হয়েছে (MP4 priority)
-            "format": "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best",
+           "format": ( "bestvideo[height>=1080]+bestaudio/bestvideo[height>=720]+bestaudio/" "best[ext=mp4]/best"),
+            "merge_output_format": "mp4",
             "quiet": True,
             "no_warnings": True,
             "noplaylist": True,
