@@ -90,6 +90,7 @@ def get_cookie_files(domain):
 # -----------------------------
 def extract_media(url: str):
     cache_key = hashlib.md5(url.encode()).hexdigest()
+
     if cache_key in cache:
         data, ts = cache[cache_key]
         if time.time() - ts < CACHE_TTL:
@@ -100,61 +101,71 @@ def extract_media(url: str):
     cookie_list.extend(get_cookie_files(domain))
 
     for cookie_path in cookie_list:
-        # এখানে 'best' এর চেয়ে 'bestvideo+bestaudio/best' রাখা জরুরি
-        # কারণ এটি আমাদের মেনিফেস্ট লিঙ্ক পাওয়ার সুযোগ দেয়
-        ydl_opts = {
-            "format": "bestvideo+bestaudio/best",
-            "quiet": True,
-            "no_warnings": True,
-            "noplaylist": True,
-            "socket_timeout": 60,
-            "retries": 10,
-            "nocheckcertificate": True,
-            "geo_bypass": True,
-            "user_agent": random.choice(USER_AGENTS),
-            "http_headers": {
-                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
-                "Accept-Language": "en-US,en;q=0.5",
-                "Referer": "https://www.google.com/",
-            }
-        }
-        
-        if cookie_path:
-            ydl_opts["cookiefile"] = cookie_path
-        
-        try:
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                info = ydl.extract_info(url, download=False)
-                
-                # ১. প্রথমে দেখি মেনিফেস্ট লিঙ্ক আছে কি না (এটিই এইচডি দেয়)
-                download_url = info.get("url")
-                
-                # ২. যদি ভিডিও ফরম্যাট লিস্টে একাধিক ফরম্যাট থাকে, তবে সেরা রেজোলিউশনটি বাছুন
-                if "formats" in info:
-                    formats = info["formats"]
-                    # এমন ফরম্যাট খুঁজুন যাতে ভিডিও এবং অডিও দুটোই আছে (বা মেনিফেস্ট)
-                    best_format = next((f for f in reversed(formats) if f.get("acodec") != "none" and f.get("vcodec") != "none"), None)
-                    
-                    if best_format:
-                        download_url = best_format.get("url")
 
-                if download_url:
-                    result = {
-                        "status": "success",
-                        "url": download_url,
-                        "title": info.get("title", "Video"),
-                        "thumbnail": info.get("thumbnail"),
-                        "duration": info.get("duration"),
-                        "source": info.get("extractor_key", domain)
-                    }
-                    cache[cache_key] = (result, time.time())
-                    return result
-                    
+        try:
+            # -----------------------
+            # VIDEO DOWNLOAD
+            # -----------------------
+            video_opts = {
+                "format": "bestvideo",
+                "outtmpl": "downloads/%(id)s_video.%(ext)s",
+                "quiet": True,
+                "noplaylist": True,
+            }
+
+            if cookie_path:
+                video_opts["cookiefile"] = cookie_path
+
+            with yt_dlp.YoutubeDL(video_opts) as ydl:
+                info = ydl.extract_info(url, download=True)
+                video_file = ydl.prepare_filename(info)
+
+            # -----------------------
+            # AUDIO DOWNLOAD
+            # -----------------------
+            audio_opts = {
+                "format": "bestaudio",
+                "outtmpl": "downloads/%(id)s_audio.%(ext)s",
+                "quiet": True,
+                "noplaylist": True,
+            }
+
+            if cookie_path:
+                audio_opts["cookiefile"] = cookie_path
+
+            with yt_dlp.YoutubeDL(audio_opts) as ydl:
+                info = ydl.extract_info(url, download=True)
+                audio_file = ydl.prepare_filename(info)
+
+            # -----------------------
+            # MERGE (FFMPEG)
+            # -----------------------
+            output_file = os.path.splitext(video_file)[0].replace("_video", "") + ".mp4"
+
+            cmd = f'ffmpeg -i "{video_file}" -i "{audio_file}" -c:v copy -c:a aac "{output_file}" -y'
+            os.system(cmd)
+
+            # cleanup (optional)
+            os.remove(video_file)
+            os.remove(audio_file)
+
+            result = {
+                "status": "success",
+                "file": output_file,
+                "title": info.get("title", "Video"),
+                "thumbnail": info.get("thumbnail"),
+                "duration": info.get("duration"),
+                "source": domain
+            }
+
+            cache[cache_key] = (result, time.time())
+            return result
+
         except Exception as e:
             logging.error(f"Error with cookie {cookie_path}: {str(e)}")
             continue
-    return None
 
+    return None
 # -----------------------------
 # ROUTES
 # -----------------------------
