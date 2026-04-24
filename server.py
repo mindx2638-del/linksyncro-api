@@ -97,45 +97,79 @@ def extract_media(url: str):
             return data
 
     domain = urlparse(url).hostname or ""
+    cookie_list = [None]
+    cookie_list.extend(get_cookie_files(domain))
 
-    ydl_opts = {
-        "format": "bestvideo+bestaudio/best",
-        "outtmpl": "downloads/%(id)s.%(ext)s",
-        "merge_output_format": "mp4",
+    for cookie_path in cookie_list:
+        ydl_opts = {
+            "format": "bestvideo+bestaudio/best",
+            "quiet": True,
+            "no_warnings": True,
+            "noplaylist": True,
+            "socket_timeout": 60,
+            "retries": 10,
+            "nocheckcertificate": True,
+            "geo_bypass": True,
+            "user_agent": random.choice(USER_AGENTS),
 
-        "quiet": True,
-        "noplaylist": True,
-        "retries": 10,
+            "http_headers": {
+                "Accept": "/",
+                "Accept-Language": "en-US,en;q=0.5",
+                "Referer": "https://www.google.com/",
+            },
 
-        "postprocessors": [
-            {
-                "key": "FFmpegMerger",
+            "extractor_args": {
+                "youtube": {
+                    "player_client": ["android", "ios", "mweb", "tv"],
+                    "player_skip": ["webpage", "configs"]
+                },
             }
-        ],
-    }
+        }
 
-    try:
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(url, download=True)
+        if cookie_path:
+            ydl_opts["cookiefile"] = cookie_path
 
-            file_path = ydl.prepare_filename(info)
-            file_path = os.path.splitext(file_path)[0] + ".mp4"
+        try:
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                info = ydl.extract_info(url, download=False)
 
-            result = {
-                "status": "success",
-                "file": file_path,
-                "title": info.get("title"),
-                "thumbnail": info.get("thumbnail"),
-                "duration": info.get("duration"),
-                "source": info.get("extractor_key", domain)
-            }
+                formats = info.get("formats", [])
 
-            cache[cache_key] = (result, time.time())
-            return result
+                # ✅ best video + audio select
+                best_video = None
+                best_audio = None
 
-    except Exception as e:
-        logging.error(f"Error: {str(e)}")
-        return None
+                for f in formats:
+                    if f.get("vcodec") != "none":
+                        if not best_video or (f.get("height") or 0) > (best_video.get("height") or 0):
+                            best_video = f
+
+                    if f.get("acodec") != "none":
+                        if not best_audio or (f.get("abr") or 0) > (best_audio.get("abr") or 0):
+                            best_audio = f
+
+                # fallback (single file with audio)
+                fallback = info.get("url")
+
+                result = {
+                    "status": "success",
+                    "video_url": best_video.get("url") if best_video else fallback,
+                    "audio_url": best_audio.get("url") if best_audio else None,
+                    "title": info.get("title", "Video"),
+                    "thumbnail": info.get("thumbnail"),
+                    "duration": info.get("duration"),
+                    "source": info.get("extractor_key", domain)
+                }
+
+                cache[cache_key] = (result, time.time())
+                return result
+
+        except Exception as e:
+            logging.error(f"Error with cookie {cookie_path}: {str(e)}")
+            continue
+
+    return None
+
 
 # -----------------------------
 # ROUTES
