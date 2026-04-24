@@ -100,9 +100,8 @@ def extract_media(url: str):
     cookie_list.extend(get_cookie_files(domain))
 
     for cookie_path in cookie_list:
-        # এখানে কোনো রেজোলিউশন লিমিট দেওয়া নেই, এটি 'best' বা সেরা ফরম্যাটটি খুঁজবে
+        # 'format' লাইনটি সরিয়ে ফেলা হয়েছে যাতে সব রেজোলিউশন পাওয়া যায়
         ydl_opts = {
-            "format": "best", 
             "quiet": True,
             "no_warnings": True,
             "noplaylist": True,
@@ -124,26 +123,25 @@ def extract_media(url: str):
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 info = ydl.extract_info(url, download=False)
                 
-                # সব ফরম্যাট সংগ্রহ করা
+                # ১. অডিও এবং ভিডিও দুটোই আছে এমন ফরম্যাট ফিল্টার করা (Muxed streams)
                 all_formats = info.get("formats", [])
+                valid_formats = [f for f in all_formats if f.get("vcodec") != "none" and f.get("acodec") != "none"]
                 
-                # শুধু সাউন্ডসহ ভিডিও (Muxed) ফিল্টার করা
-                muxed_formats = [f for f in all_formats if f.get("vcodec") != "none" and f.get("acodec") != "none"]
-                
-                # কন্ডিশনাল লজিক: ইউটিউব হলে 720p লিমিট, অন্য সাইট হলে আনলিমিটেড
+                # ২. লজিক আলাদা করা (YouTube vs Others)
                 if "youtube" in domain or "youtu.be" in domain:
-                    # ইউটিউবের জন্য সর্বোচ্চ 720p
-                    candidates = [f for f in muxed_formats if (f.get("height") or 0) <= 720]
+                    # ইউটিউবের জন্য সর্বোচ্চ 720p (যাতে সাউন্ড মিস না হয়)
+                    candidates = [f for f in valid_formats if (f.get("height") or 0) <= 720]
                 else:
-                    # অন্য সাইটের জন্য সর্বোচ্চ কোয়ালিটি (1080p+)
-                    candidates = muxed_formats
+                    # অন্যান্য সাইটের জন্য সর্বোচ্চ কোয়ালিটি (1080p+)
+                    candidates = valid_formats
                 
-                # সেরা ফরম্যাট বাছাই করা
+                # ৩. সেরা রেজোলিউশন বাছাই করা
+                download_url = None
                 if candidates:
                     candidates.sort(key=lambda x: (x.get("height") or 0), reverse=True)
                     download_url = candidates[0]["url"]
                 else:
-                    # যদি কোনো মুক্সড ফরম্যাট না পায়, ডিফল্ট URL
+                    # যদি ফিল্টার করা না যায়, তবে ডিফল্ট URL
                     download_url = info.get("url")
 
                 if download_url:
@@ -156,6 +154,8 @@ def extract_media(url: str):
                         "source": info.get("extractor_key", domain)
                     }
                     cache[cache_key] = (result, time.time())
+                    if len(cache) > 2000:
+                        cache.pop(next(iter(cache)))
                     return result
                     
         except Exception as e:
