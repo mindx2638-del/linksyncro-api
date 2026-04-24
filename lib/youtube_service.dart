@@ -2,58 +2,120 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 import 'package:youtube_explode_dart/youtube_explode_dart.dart';
 
+/// =============================
+/// Custom Exception
+/// =============================
+class YouTubeException implements Exception {
+  final String message;
+  YouTubeException(this.message);
+
+  @override
+  String toString() => message;
+}
+
+/// =============================
+/// YouTube Service
+/// =============================
 class YouTubeService {
   final YoutubeExplode _yt = YoutubeExplode();
-  
-  // আপনার রেন্ডার ব্যাকএন্ড ইউআরএল (এখানে সেট করুন)
-  final String _backendUrl = "https://linksyncro-api.onrender.com/get_media";
-  final String _apiKey = "demo_key_123"; // আপনার রেন্ডারে সেট করা কি
 
-  /// 1. Validate URL
+  final String _backendUrl = "https://linksyncro-api.onrender.com/get_media";
+  final String _apiKey = "demo_key_123";
+
+  /// =============================
+  /// 1. Validate YouTube URL (All types)
+  /// =============================
   bool isYouTubeLink(String url) {
-    if (url.isEmpty) return false;
+    if (url.trim().isEmpty) return false;
+
     final uri = Uri.tryParse(url.trim());
     if (uri == null) return false;
-    return uri.host.contains('youtube.com') || uri.host.contains('youtu.be');
+
+    final host = uri.host.toLowerCase();
+
+    return host.contains('youtube.com') ||
+        host.contains('youtu.be') ||
+        host.contains('m.youtube.com') ||
+        host.contains('music.youtube.com');
   }
 
-  /// 2. Get Metadata (Title, Thumbnail, Author) - দ্রুত কাজ করবে
+  /// =============================
+  /// 2. Extract Video ID safely (All formats)
+  /// =============================
+  String? _extractVideoId(String url) {
+    try {
+      return VideoId.tryParse(url)?.value;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// =============================
+  /// 3. Fetch Metadata (Safe & Stable)
+  /// =============================
   Future<Map<String, String>> fetchVideoMetadata(String url) async {
     try {
-      final videoId = VideoId.parseVideoId(url);
+      if (!isYouTubeLink(url)) {
+        throw YouTubeException("Invalid YouTube URL");
+      }
+
+      final videoId = _extractVideoId(url);
+      if (videoId == null) {
+        throw YouTubeException("Video ID not found");
+      }
+
       final video = await _yt.videos.get(videoId);
-      
+
       return {
-        'title': video.title,
-        'author': video.author,
-        'thumbnail': video.thumbnails.highResUrl,
-        'videoId': videoId.value,
+        'title': video.title ?? "No Title",
+        'author': video.author ?? "Unknown",
+        'thumbnail': video.thumbnails.highResUrl ??
+            video.thumbnails.mediumResUrl ??
+            "",
+        'videoId': videoId,
       };
     } catch (e) {
-      throw "মেটাডেটা লোড করতে সমস্যা হয়েছে: $e";
+      throw YouTubeException("Problem loading metadata: $e");
     }
   }
 
-  /// 3. Get HD Download Link - রেন্ডার ব্যাকএন্ড থেকে আসবে
+  /// =============================
+  /// 4. Get HD Download URL (Backend Safe)
+  /// =============================
   Future<String> getHdDownloadUrl(String url) async {
     try {
-      final response = await http.get(
-        Uri.parse("$_backendUrl?url=${Uri.encodeComponent(url)}"),
-        headers: {"x-api-key": _apiKey},
-      ).timeout(const Duration(seconds: 45));
-
-      if (response.statusCode == 200) {
-        final data = jsonDecode(response.body);
-        return data['url']; // ব্যাকএন্ড থেকে পাওয়া আসল এইচডি লিঙ্ক
-      } else {
-        throw "সার্ভার এরর: ${response.statusCode}";
+      if (!isYouTubeLink(url)) {
+        throw YouTubeException("Invalid YouTube URL");
       }
+
+      final uri = Uri.parse(
+        "$_backendUrl?url=${Uri.encodeComponent(url)}",
+      );
+
+      final response = await http
+          .get(uri, headers: {"x-api-key": _apiKey})
+          .timeout(const Duration(seconds: 45));
+
+      if (response.statusCode != 200) {
+        throw YouTubeException(
+            "Server Error: ${response.statusCode}");
+      }
+
+      final data = jsonDecode(response.body);
+
+      if (data == null || data['url'] == null) {
+        throw YouTubeException("Invalid server response");
+      }
+
+      return data['url'];
     } catch (e) {
-      throw "এইচডি লিঙ্ক জেনারেট করতে ব্যর্থ: $e";
+      throw YouTubeException("Failed to fetch hd link: $e");
     }
   }
 
-  /// 4. Dispose
+  /// =============================
+  /// 5. Dispose (Memory Safe)
+  /// =============================
   void close() {
     _yt.close();
   }
