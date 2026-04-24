@@ -89,22 +89,20 @@ def get_cookie_files(domain):
 # CORE ENGINE
 # -----------------------------
 def extract_media(url: str):
-    # আপনার অরিজিনাল ক্যাশ চেক লজিক
     cache_key = hashlib.md5(url.encode()).hexdigest()
     if cache_key in cache:
         data, ts = cache[cache_key]
         if time.time() - ts < CACHE_TTL:
-            logging.info(f"Cache Hit: {url}")
             return data
 
     domain = urlparse(url).hostname or ""
-    
-    cookie_list = [None] 
+    cookie_list = [None]
     cookie_list.extend(get_cookie_files(domain))
 
     for cookie_path in cookie_list:
+        # এখানে কোনো রেজোলিউশন লিমিট দেওয়া নেই, এটি 'best' বা সেরা ফরম্যাটটি খুঁজবে
         ydl_opts = {
-            "format": "best[height<=720]/best", 
+            "format": "best", 
             "quiet": True,
             "no_warnings": True,
             "noplaylist": True,
@@ -119,29 +117,34 @@ def extract_media(url: str):
                 "facebook": {"force_generic_extractor": False}
             }
         }
-
-
         if cookie_path:
             ydl_opts["cookiefile"] = cookie_path
-            logging.info(f"Attempting with Cookie: {cookie_path}")
-        else:
-            logging.info(f"Attempting WITHOUT cookies for: {url}")
 
         try:
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 info = ydl.extract_info(url, download=False)
                 
-                download_url = info.get("url")
+                # সব ফরম্যাট সংগ্রহ করা
+                all_formats = info.get("formats", [])
                 
-                # আপনার অরিজিনাল ফরম্যাট সিলেকশন লজিক (পুরোটা একই রাখা হয়েছে)
-                if not download_url and "formats" in info:
-                    valid_formats = [f for f in info["formats"] if f.get("vcodec") != "none" and f.get("acodec") != "none"]
-                    if not valid_formats:
-                        valid_formats = [f for f in info["formats"] if f.get("url")]
-                    
-                    if valid_formats:
-                        valid_formats.sort(key=lambda x: (x.get("height") or 0), reverse=True)
-                        download_url = valid_formats[0]["url"]
+                # শুধু সাউন্ডসহ ভিডিও (Muxed) ফিল্টার করা
+                muxed_formats = [f for f in all_formats if f.get("vcodec") != "none" and f.get("acodec") != "none"]
+                
+                # কন্ডিশনাল লজিক: ইউটিউব হলে 720p লিমিট, অন্য সাইট হলে আনলিমিটেড
+                if "youtube" in domain or "youtu.be" in domain:
+                    # ইউটিউবের জন্য সর্বোচ্চ 720p
+                    candidates = [f for f in muxed_formats if (f.get("height") or 0) <= 720]
+                else:
+                    # অন্য সাইটের জন্য সর্বোচ্চ কোয়ালিটি (1080p+)
+                    candidates = muxed_formats
+                
+                # সেরা ফরম্যাট বাছাই করা
+                if candidates:
+                    candidates.sort(key=lambda x: (x.get("height") or 0), reverse=True)
+                    download_url = candidates[0]["url"]
+                else:
+                    # যদি কোনো মুক্সড ফরম্যাট না পায়, ডিফল্ট URL
+                    download_url = info.get("url")
 
                 if download_url:
                     result = {
@@ -152,20 +155,12 @@ def extract_media(url: str):
                         "duration": info.get("duration"),
                         "source": info.get("extractor_key", domain)
                     }
-                    
                     cache[cache_key] = (result, time.time())
-                    if len(cache) > 2000: # ক্যাশ লিমিট কিছুটা বাড়ানো হয়েছে
-                        cache.pop(next(iter(cache)))
-                    
                     return result
                     
         except Exception as e:
-            if not cookie_path:
-                logging.warning(f"Failed without cookies. Error: {str(e)}")
-            else:
-                logging.error(f"Failed with cookie {cookie_path}: {str(e)}")
+            logging.error(f"Error with {domain}: {str(e)}")
             continue 
-
     return None
 
 # -----------------------------
