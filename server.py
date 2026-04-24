@@ -90,82 +90,62 @@ def get_cookie_files(domain):
 # -----------------------------
 def extract_media(url: str):
     cache_key = hashlib.md5(url.encode()).hexdigest()
-
     if cache_key in cache:
-        data, ts = cache[cache_key]
-        if time.time() - ts < CACHE_TTL:
-            return data
+        return cache[cache_key][0]
 
     domain = urlparse(url).hostname or ""
     cookie_list = [None]
     cookie_list.extend(get_cookie_files(domain))
 
     for cookie_path in cookie_list:
-
+        ydl_opts = {
+            # এটি এখন সব ফরম্যাট একসাথে লোড করবে যাতে আমরা সেরাটি বাছতে পারি
+            "format": "best", 
+            "quiet": True,
+            "no_warnings": True,
+            "noplaylist": True,
+            "user_agent": random.choice(USER_AGENTS),
+            "extractor_args": {
+                "youtube": {"player_client": ["android", "ios", "mweb", "tv"]},
+            }
+        }
+        if cookie_path: ydl_opts["cookiefile"] = cookie_path
+        
         try:
-            # -----------------------
-            # VIDEO DOWNLOAD
-            # -----------------------
-            video_opts = {
-                "format": "bestvideo",
-                "outtmpl": "downloads/%(id)s_video.%(ext)s",
-                "quiet": True,
-                "noplaylist": True,
-            }
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                info = ydl.extract_info(url, download=False)
+                
+                # ১. প্রথমে মেনিফেস্ট লিঙ্ক (HLS/DASH) খোঁজা (এটিই HD/4K এর জন্য সেরা)
+                stream_url = info.get("manifest_url") or info.get("url")
+                
+                # ২. যদি মেনিফেস্ট লিঙ্ক না পাওয়া যায়, তবে ফরম্যাট লিস্ট থেকে এমন ভিডিও খোঁজা যাতে অডিও আছে
+                if not stream_url and "formats" in info:
+                    # 'acodec' != 'none' মানে অডিও আছে, 'vcodec' != 'none' মানে ভিডিও আছে
+                    muxed_formats = [f for f in info["formats"] if f.get("acodec") != "none" and f.get("vcodec") != "none"]
+                    
+                    if muxed_formats:
+                        # রেজোলিউশন অনুযায়ী রিভার্স সর্ট (বড় থেকে ছোট)
+                        muxed_formats.sort(key=lambda x: (x.get("height") or 0), reverse=True)
+                        stream_url = muxed_formats[0]["url"]
+                    else:
+                        # যদি অডিও-ভিডিও একসাথে নেই এমন কোনো ফাইল না পাওয়া যায়, তবেই ডিফল্ট লিঙ্ক
+                        stream_url = info.get("url")
 
-            if cookie_path:
-                video_opts["cookiefile"] = cookie_path
-
-            with yt_dlp.YoutubeDL(video_opts) as ydl:
-                info = ydl.extract_info(url, download=True)
-                video_file = ydl.prepare_filename(info)
-
-            # -----------------------
-            # AUDIO DOWNLOAD
-            # -----------------------
-            audio_opts = {
-                "format": "bestaudio",
-                "outtmpl": "downloads/%(id)s_audio.%(ext)s",
-                "quiet": True,
-                "noplaylist": True,
-            }
-
-            if cookie_path:
-                audio_opts["cookiefile"] = cookie_path
-
-            with yt_dlp.YoutubeDL(audio_opts) as ydl:
-                info = ydl.extract_info(url, download=True)
-                audio_file = ydl.prepare_filename(info)
-
-            # -----------------------
-            # MERGE (FFMPEG)
-            # -----------------------
-            output_file = os.path.splitext(video_file)[0].replace("_video", "") + ".mp4"
-
-            cmd = f'ffmpeg -i "{video_file}" -i "{audio_file}" -c:v copy -c:a aac "{output_file}" -y'
-            os.system(cmd)
-
-            # cleanup (optional)
-            os.remove(video_file)
-            os.remove(audio_file)
-
-            result = {
-                "status": "success",
-                "file": output_file,
-                "title": info.get("title", "Video"),
-                "thumbnail": info.get("thumbnail"),
-                "duration": info.get("duration"),
-                "source": domain
-            }
-
-            cache[cache_key] = (result, time.time())
-            return result
-
+                if stream_url:
+                    result = {
+                        "status": "success",
+                        "stream_url": stream_url,
+                        "title": info.get("title"),
+                        "thumbnail": info.get("thumbnail"),
+                        "duration": info.get("duration")
+                    }
+                    cache[cache_key] = (result, time.time())
+                    return result
         except Exception as e:
-            logging.error(f"Error with cookie {cookie_path}: {str(e)}")
+            logging.error(f"Error: {e}")
             continue
-
     return None
+
 # -----------------------------
 # ROUTES
 # -----------------------------
