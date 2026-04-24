@@ -90,80 +90,52 @@ def get_cookie_files(domain):
 # -----------------------------
 def extract_media(url: str):
     cache_key = hashlib.md5(url.encode()).hexdigest()
+
     if cache_key in cache:
         data, ts = cache[cache_key]
         if time.time() - ts < CACHE_TTL:
             return data
 
     domain = urlparse(url).hostname or ""
-    cookie_list = [None]
-    cookie_list.extend(get_cookie_files(domain))
 
-    for cookie_path in cookie_list:
-        ydl_opts = {
-            # HD ভিডিওর জন্য অডিও এবং ভিডিও আলাদা স্ট্রিম সিলেক্ট করা হচ্ছে
-            "format": "bestvideo+bestaudio/best",
-            "quiet": True,
-            "no_warnings": True,
-            "noplaylist": True,
-            "socket_timeout": 60, 
-            "retries": 10,
-            "nocheckcertificate": True,
-            "geo_bypass": True,
-            "user_agent": random.choice(USER_AGENTS),
-            
-            # FFmpeg মার্জিং নিশ্চিত করার জন্য কনফিগ
-            "postprocessors": [
-                {
-                    "key": "FFmpegVideoConvertor",
-                    "preferedformat": "mp4",
-                }
-            ],
-            
-            "http_headers": {
-                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
-                "Accept-Language": "en-US,en;q=0.5",
-                "Referer": "https://www.google.com/",
-            },
-            "extractor_args": {
-                "youtube": {"player_client": ["android", "ios", "mweb", "tv"], "player_skip": ["webpage", "configs"]},
+    ydl_opts = {
+        "format": "bestvideo+bestaudio/best",
+        "outtmpl": "downloads/%(id)s.%(ext)s",
+        "merge_output_format": "mp4",
+
+        "quiet": True,
+        "noplaylist": True,
+        "retries": 10,
+
+        "postprocessors": [
+            {
+                "key": "FFmpegMerger",
             }
-        }
-        
-        if cookie_path:
-            ydl_opts["cookiefile"] = cookie_path
-        
-        try:
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                info = ydl.extract_info(url, download=False)
-                
-                # হাই কোয়ালিটি URL পাওয়ার লজিক
-                download_url = info.get("url") or info.get("requested_formats", [{}])[0].get("url")
-                
-                # যদি সরাসরি URL না পাওয়া যায়, তবে ফরম্যাট লিস্ট থেকে সেরাটা বাছাই করুন
-                if not download_url and "formats" in info:
-                    formats = [f for f in info["formats"] if f.get("vcodec") != "none"]
-                    if formats:
-                        formats.sort(key=lambda x: (x.get("height") or 0), reverse=True)
-                        download_url = formats[0]["url"]
+        ],
+    }
 
-                if download_url:
-                    result = {
-                        "status": "success",
-                        "url": download_url,
-                        "title": info.get("title", "Video"),
-                        "thumbnail": info.get("thumbnail"),
-                        "duration": info.get("duration"),
-                        "source": info.get("extractor_key", domain)
-                    }
-                    cache[cache_key] = (result, time.time())
-                    return result
-                    
-        except Exception as e:
-            logging.error(f"Error with cookie {cookie_path}: {str(e)}")
-            continue
-            
-    return None
+    try:
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(url, download=True)
+
+            file_path = ydl.prepare_filename(info)
+            file_path = os.path.splitext(file_path)[0] + ".mp4"
+
+            result = {
+                "status": "success",
+                "file": file_path,
+                "title": info.get("title"),
+                "thumbnail": info.get("thumbnail"),
+                "duration": info.get("duration"),
+                "source": info.get("extractor_key", domain)
+            }
+
+            cache[cache_key] = (result, time.time())
+            return result
+
+    except Exception as e:
+        logging.error(f"Error: {str(e)}")
+        return None
 
 # -----------------------------
 # ROUTES
