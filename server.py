@@ -104,7 +104,7 @@ def extract_media(url: str):
 
     for cookie_path in cookie_list:
         ydl_opts = {
-            "format": "best[height<=720][ext=mp4]/best[ext=mp4]/best",
+            "format": "best[height<=720]/best", 
             "quiet": True,
             "no_warnings": True,
             "noplaylist": True,
