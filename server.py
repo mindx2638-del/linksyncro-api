@@ -90,7 +90,6 @@ def get_cookie_files(domain):
 # -----------------------------
 def extract_media(url: str):
     cache_key = hashlib.md5(url.encode()).hexdigest()
-
     if cache_key in cache:
         data, ts = cache[cache_key]
         if time.time() - ts < CACHE_TTL:
@@ -101,6 +100,8 @@ def extract_media(url: str):
     cookie_list.extend(get_cookie_files(domain))
 
     for cookie_path in cookie_list:
+        # এখানে 'best' এর চেয়ে 'bestvideo+bestaudio/best' রাখা জরুরি
+        # কারণ এটি আমাদের মেনিফেস্ট লিঙ্ক পাওয়ার সুযোগ দেয়
         ydl_opts = {
             "format": "bestvideo+bestaudio/best",
             "quiet": True,
@@ -111,65 +112,48 @@ def extract_media(url: str):
             "nocheckcertificate": True,
             "geo_bypass": True,
             "user_agent": random.choice(USER_AGENTS),
-
             "http_headers": {
-                "Accept": "/",
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
                 "Accept-Language": "en-US,en;q=0.5",
                 "Referer": "https://www.google.com/",
-            },
-
-            "extractor_args": {
-                "youtube": {
-                    "player_client": ["android", "ios", "mweb", "tv"],
-                    "player_skip": ["webpage", "configs"]
-                },
             }
         }
-
+        
         if cookie_path:
             ydl_opts["cookiefile"] = cookie_path
-
+        
         try:
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 info = ydl.extract_info(url, download=False)
+                
+                # ১. প্রথমে দেখি মেনিফেস্ট লিঙ্ক আছে কি না (এটিই এইচডি দেয়)
+                download_url = info.get("url")
+                
+                # ২. যদি ভিডিও ফরম্যাট লিস্টে একাধিক ফরম্যাট থাকে, তবে সেরা রেজোলিউশনটি বাছুন
+                if "formats" in info:
+                    formats = info["formats"]
+                    # এমন ফরম্যাট খুঁজুন যাতে ভিডিও এবং অডিও দুটোই আছে (বা মেনিফেস্ট)
+                    best_format = next((f for f in reversed(formats) if f.get("acodec") != "none" and f.get("vcodec") != "none"), None)
+                    
+                    if best_format:
+                        download_url = best_format.get("url")
 
-                formats = info.get("formats", [])
-
-                # ✅ best video + audio select
-                best_video = None
-                best_audio = None
-
-                for f in formats:
-                    if f.get("vcodec") != "none":
-                        if not best_video or (f.get("height") or 0) > (best_video.get("height") or 0):
-                            best_video = f
-
-                    if f.get("acodec") != "none":
-                        if not best_audio or (f.get("abr") or 0) > (best_audio.get("abr") or 0):
-                            best_audio = f
-
-                # fallback (single file with audio)
-                fallback = info.get("url")
-
-                result = {
-                    "status": "success",
-                    "video_url": best_video.get("url") if best_video else fallback,
-                    "audio_url": best_audio.get("url") if best_audio else None,
-                    "title": info.get("title", "Video"),
-                    "thumbnail": info.get("thumbnail"),
-                    "duration": info.get("duration"),
-                    "source": info.get("extractor_key", domain)
-                }
-
-                cache[cache_key] = (result, time.time())
-                return result
-
+                if download_url:
+                    result = {
+                        "status": "success",
+                        "url": download_url,
+                        "title": info.get("title", "Video"),
+                        "thumbnail": info.get("thumbnail"),
+                        "duration": info.get("duration"),
+                        "source": info.get("extractor_key", domain)
+                    }
+                    cache[cache_key] = (result, time.time())
+                    return result
+                    
         except Exception as e:
             logging.error(f"Error with cookie {cookie_path}: {str(e)}")
             continue
-
     return None
-
 
 # -----------------------------
 # ROUTES
