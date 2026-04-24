@@ -89,7 +89,7 @@ def get_cookie_files(domain):
 # CORE ENGINE
 # -----------------------------
 def extract_media(url: str):
-    # ক্যাশ চেক লজিক (অপরিবর্তিত)
+    # আপনার অরিজিনাল ক্যাশ চেক লজিক
     cache_key = hashlib.md5(url.encode()).hexdigest()
     if cache_key in cache:
         data, ts = cache[cache_key]
@@ -98,12 +98,13 @@ def extract_media(url: str):
             return data
 
     domain = urlparse(url).hostname or ""
-    cookie_list = [None]
+    
+    cookie_list = [None] 
     cookie_list.extend(get_cookie_files(domain))
 
     for cookie_path in cookie_list:
-        # 'format' লিমিট সরিয়ে দিয়েছি যাতে সব ফরম্যাট পাওয়া যায়
         ydl_opts = {
+            "format": "best[height<=720]/best", 
             "quiet": True,
             "no_warnings": True,
             "noplaylist": True,
@@ -119,6 +120,7 @@ def extract_media(url: str):
             }
         }
 
+
         if cookie_path:
             ydl_opts["cookiefile"] = cookie_path
             logging.info(f"Attempting with Cookie: {cookie_path}")
@@ -129,53 +131,43 @@ def extract_media(url: str):
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 info = ydl.extract_info(url, download=False)
                 
-                # ফরম্যাট এক্সট্রাক্ট করার লজিক
-                available_formats = []
-                if "formats" in info:
-                    for f in info["formats"]:
-                        # শুধু ভিডিও এবং অডিও আছে এমনগুলো ফিল্টার করা
-                        if f.get("vcodec") != "none" and f.get("acodec") != "none":
-                            available_formats.append({
-                                "format_id": f.get("format_id"),
-                                "resolution": f.get("resolution") or f"{f.get('height')}p",
-                                "height": f.get("height") or 0,
-                                "ext": f.get("ext"),
-                                "url": f.get("url")
-                            })
+                download_url = info.get("url")
+                
+                # আপনার অরিজিনাল ফরম্যাট সিলেকশন লজিক (পুরোটা একই রাখা হয়েছে)
+                if not download_url and "formats" in info:
+                    valid_formats = [f for f in info["formats"] if f.get("vcodec") != "none" and f.get("acodec") != "none"]
+                    if not valid_formats:
+                        valid_formats = [f for f in info["formats"] if f.get("url")]
+                    
+                    if valid_formats:
+                        valid_formats.sort(key=lambda x: (x.get("height") or 0), reverse=True)
+                        download_url = valid_formats[0]["url"]
 
-                # রেজোলিউশন অনুযায়ী বড় থেকে ছোট সাজানো
-                available_formats.sort(key=lambda x: x["height"], reverse=True)
-
-                # যদি কোনো ফরম্যাট না পাওয়া যায় (Fallback)
-                if not available_formats and info.get("url"):
-                    available_formats.append({
-                        "format_id": "best",
-                        "resolution": "Default",
-                        "ext": "mp4",
-                        "url": info.get("url")
-                    })
-
-                if available_formats:
+                if download_url:
                     result = {
                         "status": "success",
+                        "url": download_url,
                         "title": info.get("title", "Video"),
                         "thumbnail": info.get("thumbnail"),
                         "duration": info.get("duration"),
-                        "source": info.get("extractor_key", domain),
-                        "formats": available_formats  # অ্যাপে কোয়ালিটি সিলেকশনের জন্য
+                        "source": info.get("extractor_key", domain)
                     }
-
-                    # ক্যাশ সেভ করা
+                    
                     cache[cache_key] = (result, time.time())
-                    if len(cache) > 2000:
+                    if len(cache) > 2000: # ক্যাশ লিমিট কিছুটা বাড়ানো হয়েছে
                         cache.pop(next(iter(cache)))
+                    
                     return result
-
+                    
         except Exception as e:
-            logging.error(f"Failed with {cookie_path}: {str(e)}")
-            continue
+            if not cookie_path:
+                logging.warning(f"Failed without cookies. Error: {str(e)}")
+            else:
+                logging.error(f"Failed with cookie {cookie_path}: {str(e)}")
+            continue 
 
     return None
+
 # -----------------------------
 # ROUTES
 # -----------------------------

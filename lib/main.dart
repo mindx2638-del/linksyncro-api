@@ -169,93 +169,40 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<void> _startDownloadProcess(DownloadTask task) async {
-  try {
-    // ১. সার্ভার থেকে ডেটা আনুন
-    final result = await _resolveLink(task.inputUrl);
-    
-    setState(() {
-      task.videoTitle = result['title'] ?? "Video_${task.id}";
-      task.thumbnailUrl = result['thumbnail'];
-    });
+    try {
+      final result = await _resolveLink(task.inputUrl);
+      setState(() {
+        task.downloadUrl = result['url'];
+        task.videoTitle = result['title'] ?? "Video_${task.id}";
+        task.thumbnailUrl = result['thumbnail'];
+      });
 
-    // ২. ফরম্যাট লিস্ট চেক করুন (যদি ব্যাকএন্ড থেকে আসে)
-    if (result['formats'] != null && (result['formats'] as List).isNotEmpty) {
-      _showQualityDialog(result['formats'], task);
-    } else if (result['url'] != null) {
-      // যদি ফরম্যাট না থাকে, সরাসরি ডাউনলোড শুরু করুন
-      _prepareAndDownload(task, result['url']);
-    } else {
-      throw "No stream found";
+      if (task.downloadUrl == null) throw "Invalid response from server";
+
+      const root = "/storage/emulated/0";
+      final folder = Directory("$root/Download/LinkSyncro");
+      if (!await folder.exists()) await folder.create(recursive: true);
+
+      // ফাইল নেম ক্লিনিং এবং লেন্থ লিমিট (Error 36 Fix)
+      String cleanName = task.videoTitle!.replaceAll(RegExp(r'[<>:"/\\|?*]'), '').trim();
+      if (cleanName.length > 50) {
+        cleanName = cleanName.substring(0, 50).trim();
+      }
+      if (cleanName.isEmpty) cleanName = "Video_${task.id}";
+
+      task.savePath = "${folder.path}/$cleanName.mp4";
+      await _executeDownload(task);
+    } catch (e) {
+      _handleTaskError(task, e);
     }
-  } catch (e) {
-    _handleTaskError(task, e);
   }
-}
-
-void _showQualityDialog(List<dynamic> formats, DownloadTask task) {
-  showModalBottomSheet(
-    context: context,
-    shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
-    builder: (context) {
-      return Container(
-        padding: const EdgeInsets.all(20),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Text("Select Quality", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-            const SizedBox(height: 10),
-            Expanded(
-              child: ListView.builder(
-                shrinkWrap: true,
-                itemCount: formats.length,
-                itemBuilder: (context, index) {
-                  final f = formats[index];
-                  return ListTile(
-                    leading: const Icon(Icons.video_collection_outlined),
-                    title: Text("${f['resolution']} - ${f['ext'].toUpperCase()}"),
-                    onTap: () {
-                      Navigator.pop(context); // ডায়ালগ বন্ধ
-                      _prepareAndDownload(task, f['url']); // ডাউনলোড শুরু
-                    },
-                  );
-                },
-              ),
-            ),
-          ],
-        ),
-      );
-    },
-  );
-}
-
-Future<void> _prepareAndDownload(DownloadTask task, String downloadUrl) async {
-  try {
-    task.downloadUrl = downloadUrl;
-    const root = "/storage/emulated/0";
-    final folder = Directory("$root/Download/LinkSyncro");
-    if (!await folder.exists()) await folder.create(recursive: true);
-
-    // ফাইল নেম ক্লিনিং
-    String cleanName = task.videoTitle!.replaceAll(RegExp(r'[<>:"/\\|?*]'), '').trim();
-    if (cleanName.length > 50) cleanName = cleanName.substring(0, 50).trim();
-    if (cleanName.isEmpty) cleanName = "Video_${task.id}";
-
-    task.savePath = "${folder.path}/$cleanName.mp4";
-    
-    // ডাউনলোড শুরু
-    await _executeDownload(task);
-  } catch (e) {
-    _handleTaskError(task, e);
-  }
-}
-
 
   Future<Map<String, dynamic>> _resolveLink(String input) async {
     if (_ytService.isYouTubeLink(input)) return await _ytService.getVideoDetails(input);
     if (_fbService.isFacebookLink(input)) return await _fbService.getVideoDetails(input);
     if (_igService.isInstagramLink(input)) return await _igService.getVideoDetails(input);
 
-    const String proxyUrl = "https://script.google.com/macros/s/AKfycbxsns846mdhcNrberwkvdB12yJ58pVg3yE6b4tbvp6rOWPxdjYvN7xeEDbIfID0_CrqJg/exec";
+    const String proxyUrl = "https://script.google.com/macros/s/AKfycbzwBjr7fOc0d91L4NgbhSLSP8mHjGnITiBtArAmrFH0YWPmVvFMqeEZqn6ZWN2X4RlfRg/exec";
     final uri = Uri.parse("$proxyUrl?url=${Uri.encodeComponent(input)}");
 
     final response = await http.get(uri).timeout(const Duration(seconds: 45));
