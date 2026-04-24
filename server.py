@@ -89,10 +89,12 @@ def get_cookie_files(domain):
 # CORE ENGINE
 # -----------------------------
 def extract_media(url: str):
+    # ক্যাশ চেক লজিক (অপরিবর্তিত)
     cache_key = hashlib.md5(url.encode()).hexdigest()
     if cache_key in cache:
         data, ts = cache[cache_key]
         if time.time() - ts < CACHE_TTL:
+            logging.info(f"Cache Hit: {url}")
             return data
 
     domain = urlparse(url).hostname or ""
@@ -100,7 +102,7 @@ def extract_media(url: str):
     cookie_list.extend(get_cookie_files(domain))
 
     for cookie_path in cookie_list:
-        # 'format' লাইনটি সরিয়ে ফেলা হয়েছে যাতে সব রেজোলিউশন পাওয়া যায়
+        # 'format' লিমিট সরিয়ে দিয়েছি যাতে সব ফরম্যাট পাওয়া যায়
         ydl_opts = {
             "quiet": True,
             "no_warnings": True,
@@ -116,53 +118,64 @@ def extract_media(url: str):
                 "facebook": {"force_generic_extractor": False}
             }
         }
+
         if cookie_path:
             ydl_opts["cookiefile"] = cookie_path
+            logging.info(f"Attempting with Cookie: {cookie_path}")
+        else:
+            logging.info(f"Attempting WITHOUT cookies for: {url}")
 
         try:
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 info = ydl.extract_info(url, download=False)
                 
-                # ১. অডিও এবং ভিডিও দুটোই আছে এমন ফরম্যাট ফিল্টার করা (Muxed streams)
-                all_formats = info.get("formats", [])
-                valid_formats = [f for f in all_formats if f.get("vcodec") != "none" and f.get("acodec") != "none"]
-                
-                # ২. লজিক আলাদা করা (YouTube vs Others)
-                if "youtube" in domain or "youtu.be" in domain:
-                    # ইউটিউবের জন্য সর্বোচ্চ 720p (যাতে সাউন্ড মিস না হয়)
-                    candidates = [f for f in valid_formats if (f.get("height") or 0) <= 720]
-                else:
-                    # অন্যান্য সাইটের জন্য সর্বোচ্চ কোয়ালিটি (1080p+)
-                    candidates = valid_formats
-                
-                # ৩. সেরা রেজোলিউশন বাছাই করা
-                download_url = None
-                if candidates:
-                    candidates.sort(key=lambda x: (x.get("height") or 0), reverse=True)
-                    download_url = candidates[0]["url"]
-                else:
-                    # যদি ফিল্টার করা না যায়, তবে ডিফল্ট URL
-                    download_url = info.get("url")
+                # ফরম্যাট এক্সট্রাক্ট করার লজিক
+                available_formats = []
+                if "formats" in info:
+                    for f in info["formats"]:
+                        # শুধু ভিডিও এবং অডিও আছে এমনগুলো ফিল্টার করা
+                        if f.get("vcodec") != "none" and f.get("acodec") != "none":
+                            available_formats.append({
+                                "format_id": f.get("format_id"),
+                                "resolution": f.get("resolution") or f"{f.get('height')}p",
+                                "height": f.get("height") or 0,
+                                "ext": f.get("ext"),
+                                "url": f.get("url")
+                            })
 
-                if download_url:
+                # রেজোলিউশন অনুযায়ী বড় থেকে ছোট সাজানো
+                available_formats.sort(key=lambda x: x["height"], reverse=True)
+
+                # যদি কোনো ফরম্যাট না পাওয়া যায় (Fallback)
+                if not available_formats and info.get("url"):
+                    available_formats.append({
+                        "format_id": "best",
+                        "resolution": "Default",
+                        "ext": "mp4",
+                        "url": info.get("url")
+                    })
+
+                if available_formats:
                     result = {
                         "status": "success",
-                        "url": download_url,
                         "title": info.get("title", "Video"),
                         "thumbnail": info.get("thumbnail"),
                         "duration": info.get("duration"),
-                        "source": info.get("extractor_key", domain)
+                        "source": info.get("extractor_key", domain),
+                        "formats": available_formats  # অ্যাপে কোয়ালিটি সিলেকশনের জন্য
                     }
+
+                    # ক্যাশ সেভ করা
                     cache[cache_key] = (result, time.time())
                     if len(cache) > 2000:
                         cache.pop(next(iter(cache)))
                     return result
-                    
-        except Exception as e:
-            logging.error(f"Error with {domain}: {str(e)}")
-            continue 
-    return None
 
+        except Exception as e:
+            logging.error(f"Failed with {cookie_path}: {str(e)}")
+            continue
+
+    return None
 # -----------------------------
 # ROUTES
 # -----------------------------
