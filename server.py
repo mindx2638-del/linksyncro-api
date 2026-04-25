@@ -15,23 +15,24 @@ def setup_cookies_from_env():
     os.makedirs("cookies/facebook_cookies", exist_ok=True)
     os.makedirs("cookies/instagram_cookies", exist_ok=True)
 
-    # ফেসবুক কুকি ফাইল তৈরি
-    fb_data = os.environ.get("FB_COOKIES")
-    if fb_data:
-        with open("cookies/facebook_cookies/facebook_1.txt", "w") as f:
-            f.write(fb_data)
-            logging.info("✅ Facebook cookie file created from ENV")
-            
-    # ইনস্টাগ্রাম কুকি ফাইল তৈরি
-    insta_data = os.environ.get("INSTA_COOKIES")
-    if insta_data:
-        with open("cookies/instagram_cookies/instagram_1.txt", "w") as f:
-            f.write(insta_data)
-            logging.info("✅ Instagram cookie file created from ENV")
+    # লুপ চালিয়ে ১ থেকে ৫ পর্যন্ত কুকি ফাইল চেক করবে
+    for i in range(1, 6): 
+        # ফেসবুকের জন্য
+        fb_data = os.environ.get(f"FB_COOKIES_{i}")
+        if fb_data:
+            with open(f"cookies/facebook_cookies/facebook_{i}.txt", "w") as f:
+                f.write(fb_data)
+                logging.info(f"✅ Facebook cookie file {i} created from ENV")
+        
+        # ইনস্টাগ্রামের জন্য
+        insta_data = os.environ.get(f"INSTA_COOKIES_{i}")
+        if insta_data:
+            with open(f"cookies/instagram_cookies/instagram_{i}.txt", "w") as f:
+                f.write(insta_data)
+                logging.info(f"✅ Instagram cookie file {i} created from ENV")
 
 # সার্ভার স্টার্ট হওয়ার সময় এই ফাংশনটি রান হবে
 setup_cookies_from_env()
-# --- নতুন কোড ব্লক শেষ ---
 
 # -----------------------------
 # APP INITIALIZATION
