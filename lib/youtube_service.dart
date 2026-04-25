@@ -44,7 +44,7 @@ class YouTubeService {
   /// =============================
   String? _extractVideoId(String url) {
     try {
-      return VideoId.tryParse(url)?.value;
+      return VideoId(url).value;
     } catch (_) {
       return null;
     }
@@ -83,35 +83,40 @@ class YouTubeService {
   /// 4. Get HD Download URL (Backend Safe)
   /// =============================
   Future<String> getHdDownloadUrl(String url) async {
-    try {
-      if (!isYouTubeLink(url)) {
-        throw YouTubeException("Invalid YouTube URL");
-      }
-
-      final uri = Uri.parse(
-        "$_backendUrl?url=${Uri.encodeComponent(url)}",
-      );
-
-      final response = await http
-          .get(uri, headers: {"x-api-key": _apiKey})
-          .timeout(const Duration(seconds: 45));
-
-      if (response.statusCode != 200) {
-        throw YouTubeException(
-            "Server Error: ${response.statusCode}");
-      }
-
-      final data = jsonDecode(response.body);
-
-      if (data == null || data['url'] == null) {
-        throw YouTubeException("Invalid server response");
-      }
-
-      return data['url'];
-    } catch (e) {
-      throw YouTubeException("Failed to fetch hd link: $e");
+  try {
+    if (!isYouTubeLink(url)) {
+      throw YouTubeException("Invalid YouTube URL");
     }
+
+    final String encodedUrl = Uri.encodeComponent(url);
+    final String fullUrl = "$_backendUrl?url=$encodedUrl";
+    
+    print("Sending Request to: $fullUrl"); // চেক ১: ইউআরএল ঠিক আছে কিনা
+
+    final response = await http.get(
+      Uri.parse(fullUrl), 
+      headers: {"x-api-key": _apiKey}
+    ).timeout(const Duration(seconds: 45));
+
+    print("Response Status Code: ${response.statusCode}"); // চেক ২: স্ট্যাটাস কোড কি ২০০?
+    print("Response Body: ${response.body}"); // চেক ৩: সার্ভার আসলে কি বলছে?
+
+    if (response.statusCode != 200) {
+      throw YouTubeException("Server Error: ${response.statusCode}");
+    }
+
+    final data = jsonDecode(response.body);
+
+    if (data == null || data['url'] == null) {
+      throw YouTubeException("Invalid server response");
+    }
+
+    return data['url'];
+  } catch (e) {
+    print("FATAL ERROR in getHdDownloadUrl: $e"); // চেক ৪: আসল এররটা এখানে দেখাবে
+    throw YouTubeException("Failed to fetch hd link: $e");
   }
+}
 
   /// =============================
   /// 5. Dispose (Memory Safe)

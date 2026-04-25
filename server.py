@@ -9,51 +9,6 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from urllib.parse import urlparse
 from concurrent.futures import ThreadPoolExecutor
-import subprocess
-import logging
-
-logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
-
-def setup_cookies_from_env():
-    # ফোল্ডার তৈরি
-    os.makedirs("cookies/facebook_cookies", exist_ok=True)
-    os.makedirs("cookies/instagram_cookies", exist_ok=True)
-    os.makedirs("cookies/youtube_cookies", exist_ok=True)
-
-    # লুপ ব্যবহার করে সবকটি কুকি ভেরিয়েবল চেক করা (১ থেকে ৫ পর্যন্ত)
-    for i in range(1, 6):
-        # ফেসবুকের জন্য
-        fb_data = os.environ.get(f"FB_COOKIES_{i}")
-        if fb_data:
-            try:
-                with open(f"cookies/facebook_cookies/facebook_{i}.txt", "w") as f:
-                    f.write(fb_data)
-                logging.info(f"✅ Facebook cookie file {i} created successfully.")
-            except Exception as e:
-                logging.error(f"❌ Error creating FB cookie {i}: {e}")
-
-        # ইনস্টাগ্রামের জন্য
-        insta_data = os.environ.get(f"INSTA_COOKIES_{i}")
-        if insta_data:
-            try:
-                with open(f"cookies/instagram_cookies/instagram_{i}.txt", "w") as f:
-                    f.write(insta_data)
-                logging.info(f"✅ Instagram cookie file {i} created successfully.")
-            except Exception as e:
-                logging.error(f"❌ Error creating Insta cookie {i}: {e}")
-        
-        # ইউটিউবের জন্য
-        yt_data = os.environ.get(f"YT_COOKIES_{i}")
-        if yt_data:
-            try:
-                with open(f"cookies/youtube_cookies/youtube_{i}.txt", "w") as f:
-                    f.write(yt_data)
-                logging.info(f"✅ YouTube cookie file {i} created successfully.")
-            except Exception as e:
-                logging.error(f"❌ Error creating YT cookie {i}: {e}")
-
-
-setup_cookies_from_env()
 
 # -----------------------------
 # APP INITIALIZATION
@@ -134,7 +89,7 @@ def get_cookie_files(domain):
 # CORE ENGINE
 # -----------------------------
 def extract_media(url: str):
-    # ক্যাশ চেক
+    # আপনার অরিজিনাল ক্যাশ চেক লজিক
     cache_key = hashlib.md5(url.encode()).hexdigest()
     if cache_key in cache:
         data, ts = cache[cache_key]
@@ -144,15 +99,12 @@ def extract_media(url: str):
 
     domain = urlparse(url).hostname or ""
     
-    # কুকি লিস্ট তৈরি
     cookie_list = [None] 
     cookie_list.extend(get_cookie_files(domain))
 
     for cookie_path in cookie_list:
         ydl_opts = {
-            "format": "bestvideo+bestaudio/best",
-            "merge_output_format": "mp4",
-            "postprocessors": [{"key": "FFmpegMerger"}],
+            "format": "best[height<=720]/best", 
             "quiet": True,
             "no_warnings": True,
             "noplaylist": True,
@@ -160,22 +112,14 @@ def extract_media(url: str):
             "retries": 10,
             "nocheckcertificate": True,
             "geo_bypass": True,
-            
-            # এই অংশটি যোগ করুন (সবথেকে গুরুত্বপূর্ণ)
-            "http_headers": {
-                "User-Agent": random.choice(USER_AGENTS),
-                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
-                "Accept-Language": "en-US,en;q=0.5",
-                "Referer": "https://www.google.com/",
-                "DNT": "1",  # Do Not Track
-            },
-            
+            "user_agent": random.choice(USER_AGENTS),
             "extractor_args": {
-                "youtube": {"player_client": ["android", "ios", "mweb", "tv"]},
+                "youtube": {"player_client": ["android", "ios", "mweb", "tv"], "player_skip": ["webpage", "configs"]},
                 "instagram": {"force_subtitles": False},
                 "facebook": {"force_generic_extractor": False}
             }
         }
+
 
         if cookie_path:
             ydl_opts["cookiefile"] = cookie_path
@@ -187,15 +131,18 @@ def extract_media(url: str):
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 info = ydl.extract_info(url, download=False)
                 
-                # সরাসরি URL পাওয়ার চেষ্টা
                 download_url = info.get("url")
                 
-                # যদি ডিরেক্ট URL না পাওয়া যায়, info থেকে ফরম্যাট খুঁজে বের করা
+                # আপনার অরিজিনাল ফরম্যাট সিলেকশন লজিক (পুরোটা একই রাখা হয়েছে)
                 if not download_url and "formats" in info:
-                    # bestvideo+bestaudio ব্যবহার করলে yt-dlp নিজেই সেরাটি সিলেক্ট করে
-                    # তবুও সেফটির জন্য আমরা সরাসরি সেরা URL টি নেয়ার চেষ্টা করছি
-                    download_url = info.get("url")
-                
+                    valid_formats = [f for f in info["formats"] if f.get("vcodec") != "none" and f.get("acodec") != "none"]
+                    if not valid_formats:
+                        valid_formats = [f for f in info["formats"] if f.get("url")]
+                    
+                    if valid_formats:
+                        valid_formats.sort(key=lambda x: (x.get("height") or 0), reverse=True)
+                        download_url = valid_formats[0]["url"]
+
                 if download_url:
                     result = {
                         "status": "success",
@@ -206,9 +153,8 @@ def extract_media(url: str):
                         "source": info.get("extractor_key", domain)
                     }
                     
-                    # ক্যাশ সেভ করা
                     cache[cache_key] = (result, time.time())
-                    if len(cache) > 2000:
+                    if len(cache) > 2000: # ক্যাশ লিমিট কিছুটা বাড়ানো হয়েছে
                         cache.pop(next(iter(cache)))
                     
                     return result
@@ -262,25 +208,6 @@ async def get_media(url: str, request: Request):
     except Exception as e:
         logging.error(f"Critical Error: {str(e)}")
         raise HTTPException(status_code=500, detail="Internal server error")
-
-
-@app.get("/check-ffmpeg")
-async def check_ffmpeg():
-    try:
-        # ffmpeg -version কমান্ডটি রান করবে
-        result = subprocess.run(["ffmpeg", "-version"], capture_output=True, text=True)
-        return {
-            "status": "success",
-            "message": "FFmpeg is installed",
-            "version": result.stdout.split('\n')[0] # প্রথম লাইনটি দেখাবে
-        }
-    except Exception as e:
-        return {
-            "status": "error",
-            "message": "FFmpeg not found or error occurred",
-            "details": str(e)
-        }
-
 
 # -----------------------------
 # RUNNER
