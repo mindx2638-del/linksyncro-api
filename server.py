@@ -10,6 +10,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from urllib.parse import urlparse
 from concurrent.futures import ThreadPoolExecutor
 import subprocess
+import logging
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 
 def setup_cookies_from_env():
     # ফোল্ডার তৈরি
@@ -22,23 +25,35 @@ def setup_cookies_from_env():
         # ফেসবুকের জন্য
         fb_data = os.environ.get(f"FB_COOKIES_{i}")
         if fb_data:
-            with open(f"cookies/facebook_cookies/facebook_{i}.txt", "w") as f:
-                f.write(fb_data)
-                logging.info(f"✅ Facebook cookie file {i} created from ENV")
+            try:
+                with open(f"cookies/facebook_cookies/facebook_{i}.txt", "w") as f:
+                    f.write(fb_data)
+                logging.info(f"✅ Facebook cookie file {i} created successfully.")
+            except Exception as e:
+                logging.error(f"❌ Error creating FB cookie {i}: {e}")
 
         # ইনস্টাগ্রামের জন্য
         insta_data = os.environ.get(f"INSTA_COOKIES_{i}")
         if insta_data:
-            with open(f"cookies/instagram_cookies/instagram_{i}.txt", "w") as f:
-                f.write(insta_data)
-                logging.info(f"✅ Instagram cookie file {i} created from ENV")
+            try:
+                with open(f"cookies/instagram_cookies/instagram_{i}.txt", "w") as f:
+                    f.write(insta_data)
+                logging.info(f"✅ Instagram cookie file {i} created successfully.")
+            except Exception as e:
+                logging.error(f"❌ Error creating Insta cookie {i}: {e}")
         
         # ইউটিউবের জন্য
         yt_data = os.environ.get(f"YT_COOKIES_{i}")
         if yt_data:
-            with open(f"cookies/youtube_cookies/youtube_{i}.txt", "w") as f:
-                f.write(yt_data)
-                logging.info(f"✅ YouTube cookie file {i} created from ENV")
+            try:
+                with open(f"cookies/youtube_cookies/youtube_{i}.txt", "w") as f:
+                    f.write(yt_data)
+                logging.info(f"✅ YouTube cookie file {i} created successfully.")
+            except Exception as e:
+                logging.error(f"❌ Error creating YT cookie {i}: {e}")
+
+
+setup_cookies_from_env()
 
 # -----------------------------
 # APP INITIALIZATION
