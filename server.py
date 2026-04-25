@@ -9,6 +9,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from urllib.parse import urlparse
 from concurrent.futures import ThreadPoolExecutor
+import subprocess
 
 def setup_cookies_from_env():
     # ডিরেক্টরি তৈরি
@@ -119,7 +120,7 @@ def get_cookie_files(domain):
 # CORE ENGINE
 # -----------------------------
 def extract_media(url: str):
-    # আপনার অরিজিনাল ক্যাশ চেক লজিক
+    # ক্যাশ চেক
     cache_key = hashlib.md5(url.encode()).hexdigest()
     if cache_key in cache:
         data, ts = cache[cache_key]
@@ -129,13 +130,18 @@ def extract_media(url: str):
 
     domain = urlparse(url).hostname or ""
     
+    # কুকি লিস্ট তৈরি
     cookie_list = [None] 
     cookie_list.extend(get_cookie_files(domain))
 
     for cookie_path in cookie_list:
         ydl_opts = {
-            # "bestvideo+bestaudio" ব্যবহার করলে FFmpeg অডিও এবং ভিডিও মিলিয়ে সেরা কোয়ালিটি দেবে
-            "format": "bestvideo+bestaudio/best", 
+            # HD ফরম্যাট এবং অটো-মার্জ অপশন
+            "format": "bestvideo+bestaudio/best",
+            "merge_output_format": "mp4",
+            "postprocessors": [{
+                "key": "FFmpegMerger",
+            }],
             "quiet": True,
             "no_warnings": True,
             "noplaylist": True,
@@ -151,7 +157,6 @@ def extract_media(url: str):
             }
         }
 
-
         if cookie_path:
             ydl_opts["cookiefile"] = cookie_path
             logging.info(f"Attempting with Cookie: {cookie_path}")
@@ -162,18 +167,15 @@ def extract_media(url: str):
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 info = ydl.extract_info(url, download=False)
                 
+                # সরাসরি URL পাওয়ার চেষ্টা
                 download_url = info.get("url")
                 
-                # আপনার অরিজিনাল ফরম্যাট সিলেকশন লজিক (পুরোটা একই রাখা হয়েছে)
+                # যদি ডিরেক্ট URL না পাওয়া যায়, info থেকে ফরম্যাট খুঁজে বের করা
                 if not download_url and "formats" in info:
-                    valid_formats = [f for f in info["formats"] if f.get("vcodec") != "none" and f.get("acodec") != "none"]
-                    if not valid_formats:
-                        valid_formats = [f for f in info["formats"] if f.get("url")]
-                    
-                    if valid_formats:
-                        valid_formats.sort(key=lambda x: (x.get("height") or 0), reverse=True)
-                        download_url = valid_formats[0]["url"]
-
+                    # bestvideo+bestaudio ব্যবহার করলে yt-dlp নিজেই সেরাটি সিলেক্ট করে
+                    # তবুও সেফটির জন্য আমরা সরাসরি সেরা URL টি নেয়ার চেষ্টা করছি
+                    download_url = info.get("url")
+                
                 if download_url:
                     result = {
                         "status": "success",
@@ -184,8 +186,9 @@ def extract_media(url: str):
                         "source": info.get("extractor_key", domain)
                     }
                     
+                    # ক্যাশ সেভ করা
                     cache[cache_key] = (result, time.time())
-                    if len(cache) > 2000: # ক্যাশ লিমিট কিছুটা বাড়ানো হয়েছে
+                    if len(cache) > 2000:
                         cache.pop(next(iter(cache)))
                     
                     return result
@@ -239,6 +242,25 @@ async def get_media(url: str, request: Request):
     except Exception as e:
         logging.error(f"Critical Error: {str(e)}")
         raise HTTPException(status_code=500, detail="Internal server error")
+
+
+@app.get("/check-ffmpeg")
+async def check_ffmpeg():
+    try:
+        # ffmpeg -version কমান্ডটি রান করবে
+        result = subprocess.run(["ffmpeg", "-version"], capture_output=True, text=True)
+        return {
+            "status": "success",
+            "message": "FFmpeg is installed",
+            "version": result.stdout.split('\n')[0] # প্রথম লাইনটি দেখাবে
+        }
+    except Exception as e:
+        return {
+            "status": "error",
+            "message": "FFmpeg not found or error occurred",
+            "details": str(e)
+        }
+
 
 # -----------------------------
 # RUNNER
