@@ -136,12 +136,9 @@ def extract_media(url: str):
 
     for cookie_path in cookie_list:
         ydl_opts = {
-            # HD ফরম্যাট এবং অটো-মার্জ অপশন
             "format": "bestvideo+bestaudio/best",
             "merge_output_format": "mp4",
-            "postprocessors": [{
-                "key": "FFmpegMerger",
-            }],
+            "postprocessors": [{"key": "FFmpegMerger"}],
             "quiet": True,
             "no_warnings": True,
             "noplaylist": True,
@@ -149,9 +146,18 @@ def extract_media(url: str):
             "retries": 10,
             "nocheckcertificate": True,
             "geo_bypass": True,
-            "user_agent": random.choice(USER_AGENTS),
+            
+            # এই অংশটি যোগ করুন (সবথেকে গুরুত্বপূর্ণ)
+            "http_headers": {
+                "User-Agent": random.choice(USER_AGENTS),
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+                "Accept-Language": "en-US,en;q=0.5",
+                "Referer": "https://www.google.com/",
+                "DNT": "1",  # Do Not Track
+            },
+            
             "extractor_args": {
-                "youtube": {"player_client": ["android", "ios", "mweb", "tv"], "player_skip": ["webpage", "configs"]},
+                "youtube": {"player_client": ["android", "ios", "mweb", "tv"]},
                 "instagram": {"force_subtitles": False},
                 "facebook": {"force_generic_extractor": False}
             }
