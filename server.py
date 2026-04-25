@@ -104,7 +104,8 @@ def extract_media(url: str):
 
     for cookie_path in cookie_list:
         ydl_opts = {
-            "format": "best[height<=720]/best", 
+            # "bestvideo+bestaudio" ব্যবহার করলে FFmpeg অডিও এবং ভিডিও মিলিয়ে সেরা কোয়ালিটি দেবে
+            "format": "bestvideo+bestaudio/best", 
             "quiet": True,
             "no_warnings": True,
             "noplaylist": True,
