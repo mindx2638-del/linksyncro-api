@@ -14,7 +14,7 @@ class YouTubeService {
         uri.host.contains('youtu.be');
   }
 
-  /// 2. Extract Video ID (UNIVERSAL FIX)
+  /// 2. Extract Video ID (FIXED UNIVERSAL)
   String? _extractVideoId(String url) {
     try {
       final uri = Uri.parse(url.trim());
@@ -26,19 +26,17 @@ class YouTubeService {
             : null;
       }
 
-      // youtube.com/watch?v=<id>
+      // watch?v=<id>
       if (uri.queryParameters.containsKey('v')) {
         return uri.queryParameters['v'];
       }
 
       // shorts / live / embed
       for (final segment in uri.pathSegments) {
-        if (segment.length == 11) {
-          return segment;
-        }
+        if (segment.length == 11) return segment;
       }
 
-      // fallback regex
+      // fallback
       final regExp = RegExp(r'(?:v=|\/)([0-9A-Za-z_-]{11})');
       final match = regExp.firstMatch(url);
       return match?.group(1);
@@ -48,7 +46,7 @@ class YouTubeService {
     }
   }
 
-  /// 3. Get BEST HD VIDEO ONLY STREAM
+  /// 3. Get DOWNLOADABLE STREAM (FIXED)
   Future<Map<String, String>> getVideoDetails(String url) async {
     try {
       final videoId = _extractVideoId(url);
@@ -59,9 +57,9 @@ class YouTubeService {
 
       final video = await _yt.videos.get(videoId);
 
-      // Live check
+      // live check
       if (video.isLive) {
-        throw "Live videos cannot be downloaded.";
+        throw "Live video cannot be downloaded.";
       }
 
       final manifest =
@@ -69,29 +67,19 @@ class YouTubeService {
 
       String? streamUrl;
 
-      /// 🔥 BEST HD VIDEO ONLY LOGIC (STABLE)
-      if (manifest.videoOnly.isNotEmpty) {
-        final videoStreams = manifest.videoOnly.toList();
-
-        videoStreams.sort((a, b) =>
-            b.videoQuality.maxHeight
-                .compareTo(a.videoQuality.maxHeight));
-
-        streamUrl = videoStreams.first.url.toString();
+      /// 🔥 BEST: MUXED (WORKS FOR DOWNLOAD)
+      if (manifest.muxed.isNotEmpty) {
+        streamUrl =
+            manifest.muxed.withHighestBitrate().url.toString();
       }
 
-      /// fallback muxed
-      else if (manifest.muxed.isNotEmpty) {
-        streamUrl = manifest.muxed.withHighestBitrate().url.toString();
-      }
-
-      /// last fallback
+      /// fallback (rare)
       else if (manifest.streams.isNotEmpty) {
         streamUrl = manifest.streams.first.url.toString();
       }
 
       if (streamUrl == null) {
-        throw "No stream found.";
+        throw "No downloadable stream found.";
       }
 
       return {
@@ -101,8 +89,10 @@ class YouTubeService {
         'author': video.author,
       };
 
+    } on VideoUnavailableException {
+      throw "Video is unavailable.";
     } catch (e) {
-      throw "Error: ${e.toString().replaceAll("Exception:", "")}";
+      throw "Error: ${e.toString()}";
     }
   }
 
