@@ -3,7 +3,7 @@ import 'package:http/http.dart' as http;
 
 class YouTubeService {
   // আপনার API Endpoint এবং Key
-  static const String _apiUrl = "https://linksyncro-api-1.onrender.com/get_media";
+  static const String _apiUrl = "https://linksyncro-api.onrender.com/get_media";
   static const String _apiKey = "demo_key_123";
 
   /// 1. Validate if the URL is a YouTube link
