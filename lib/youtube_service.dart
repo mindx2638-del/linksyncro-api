@@ -7,58 +7,42 @@ class YouTubeService {
   bool isYouTubeLink(String url) {
     if (url.isEmpty) return false;
 
-    final String cleanUrl =
-        url.trim().replaceAll(RegExp(r'[à¥¤â€”\s]+$'), '');
-
-    final uri = Uri.tryParse(cleanUrl);
+    final uri = Uri.tryParse(url.trim());
     if (uri == null) return false;
 
     return uri.host.contains('youtube.com') ||
         uri.host.contains('youtu.be');
   }
 
-  /// 2. Extract Video ID
+  /// 2. Extract Video ID (UNIVERSAL FIX)
   String? _extractVideoId(String url) {
     try {
-      final String cleanUrl =
-          url.trim().replaceAll(RegExp(r'[à¥¤â€”\s]+$'), '');
+      final uri = Uri.parse(url.trim());
 
-      final uri = Uri.parse(cleanUrl);
-
+      // youtu.be/<id>
       if (uri.host.contains('youtu.be')) {
         return uri.pathSegments.isNotEmpty
             ? uri.pathSegments.first
             : null;
       }
 
+      // youtube.com/watch?v=<id>
       if (uri.queryParameters.containsKey('v')) {
         return uri.queryParameters['v'];
       }
 
-      if (uri.pathSegments.contains('shorts')) {
-        return uri.pathSegments.last;
+      // shorts / live / embed
+      for (final segment in uri.pathSegments) {
+        if (segment.length == 11) {
+          return segment;
+        }
       }
 
-      if (uri.pathSegments.contains('live')) {
-        return uri.pathSegments.last;
-      }
+      // fallback regex
+      final regExp = RegExp(r'(?:v=|\/)([0-9A-Za-z_-]{11})');
+      final match = regExp.firstMatch(url);
+      return match?.group(1);
 
-      if (uri.pathSegments.contains('embed')) {
-        return uri.pathSegments.last;
-      }
-
-      final RegExp regExp = RegExp(
-        r'^.*(?:(?:youtu\.be\/|v\/|vi\/|u\/\w\/|embed\/|shorts\/|live\/)|(?:(?:watch)?\?v(?:i)?=|\&v(?:i)?=))([^#\&\?]*).*',
-      );
-
-      final match = regExp.firstMatch(cleanUrl);
-
-      if (match != null && match.groupCount >= 1) {
-        final String? id = match.group(1);
-        if (id != null && id.length == 11) return id;
-      }
-
-      return null;
     } catch (_) {
       return null;
     }
@@ -70,14 +54,14 @@ class YouTubeService {
       final videoId = _extractVideoId(url);
 
       if (videoId == null) {
-        throw "Invalid video ID. Please check the URL.";
+        throw "Invalid YouTube link.";
       }
 
       final video = await _yt.videos.get(videoId);
 
-      if (video.duration == null ||
-          video.duration!.inSeconds == 0) {
-        throw "Live or upcoming videos cannot be downloaded.";
+      // Live check
+      if (video.isLive) {
+        throw "Live videos cannot be downloaded.";
       }
 
       final manifest =
@@ -85,64 +69,51 @@ class YouTubeService {
 
       String? streamUrl;
 
-      /// 🔥 HD VIDEO ONLY PRIORITY SYSTEM (FIXED)
+      /// 🔥 BEST HD VIDEO ONLY LOGIC (STABLE)
       if (manifest.videoOnly.isNotEmpty) {
-  final videoStreams = manifest.videoOnly.toList();
+        final videoStreams = manifest.videoOnly.toList();
 
-  int getQualityScore(VideoQuality q) {
-    final label = q.toString().toLowerCase();
+        videoStreams.sort((a, b) =>
+            b.videoQuality.maxHeight
+                .compareTo(a.videoQuality.maxHeight));
 
-    if (label.contains('1080')) return 3;
-    if (label.contains('720')) return 2;
-    if (label.contains('480')) return 1;
-    if (label.contains('360')) return 0;
+        streamUrl = videoStreams.first.url.toString();
+      }
 
-    return -1;
-  }
+      /// fallback muxed
+      else if (manifest.muxed.isNotEmpty) {
+        streamUrl = manifest.muxed.withHighestBitrate().url.toString();
+      }
 
-  videoStreams.sort((a, b) =>
-      getQualityScore(b.videoQuality)
-          .compareTo(getQualityScore(a.videoQuality)));
-
-  streamUrl = videoStreams.first.url.toString();
-}
-
-      /// fallback
+      /// last fallback
       else if (manifest.streams.isNotEmpty) {
         streamUrl = manifest.streams.first.url.toString();
       }
 
       if (streamUrl == null) {
-        throw "No downloadable HD stream found.";
+        throw "No stream found.";
       }
 
-      return _buildResponse(video, streamUrl);
-    } on VideoUnavailableException {
-      throw "Video is unavailable (Private or Removed).";
+      return {
+        'title': _safeFileName(video.title),
+        'url': streamUrl,
+        'thumbnail': video.thumbnails.highResUrl,
+        'author': video.author,
+      };
+
     } catch (e) {
       throw "Error: ${e.toString().replaceAll("Exception:", "")}";
     }
   }
 
-  /// 4. Response builder
-  Map<String, String> _buildResponse(
-      Video video, String streamUrl) {
-    return {
-      'title': _safeFileName(video.title),
-      'url': streamUrl,
-      'thumbnail': video.thumbnails.highResUrl,
-      'author': video.author,
-    };
-  }
-
-  /// 5. Safe filename
+  /// 4. Safe filename
   String _safeFileName(String input) {
     return input
         .replaceAll(RegExp(r'[<>:"/\\|?*]'), '_')
         .trim();
   }
 
-  /// 6. Dispose
+  /// 5. Dispose
   void close() {
     _yt.close();
   }
