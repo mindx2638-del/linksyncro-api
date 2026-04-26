@@ -5,8 +5,6 @@ class YouTubeService {
 
   /// 1. Validate YouTube URL
   bool isYouTubeLink(String url) {
-    if (url.isEmpty) return false;
-
     final uri = Uri.tryParse(url.trim());
     if (uri == null) return false;
 
@@ -14,39 +12,34 @@ class YouTubeService {
         uri.host.contains('youtu.be');
   }
 
-  /// 2. Extract Video ID (FIXED UNIVERSAL)
+  /// 2. Extract Video ID
   String? _extractVideoId(String url) {
     try {
       final uri = Uri.parse(url.trim());
 
-      // youtu.be/<id>
       if (uri.host.contains('youtu.be')) {
         return uri.pathSegments.isNotEmpty
             ? uri.pathSegments.first
             : null;
       }
 
-      // watch?v=<id>
       if (uri.queryParameters.containsKey('v')) {
         return uri.queryParameters['v'];
       }
 
-      // shorts / live / embed
       for (final segment in uri.pathSegments) {
         if (segment.length == 11) return segment;
       }
 
-      // fallback
       final regExp = RegExp(r'(?:v=|\/)([0-9A-Za-z_-]{11})');
       final match = regExp.firstMatch(url);
       return match?.group(1);
-
     } catch (_) {
       return null;
     }
   }
 
-  /// 3. Get DOWNLOADABLE STREAM (FIXED)
+  /// 3. Get BEST QUALITY VIDEO (UP TO 4K)
   Future<Map<String, String>> getVideoDetails(String url) async {
     try {
       final videoId = _extractVideoId(url);
@@ -57,7 +50,6 @@ class YouTubeService {
 
       final video = await _yt.videos.get(videoId);
 
-      // live check
       if (video.isLive) {
         throw "Live video cannot be downloaded.";
       }
@@ -67,19 +59,37 @@ class YouTubeService {
 
       String? streamUrl;
 
-      /// 🔥 BEST: MUXED (WORKS FOR DOWNLOAD)
-      if (manifest.muxed.isNotEmpty) {
+      /// 🔥 BEST QUALITY VIDEO ONLY (4K SUPPORT)
+      if (manifest.videoOnly.isNotEmpty) {
+        final streams = manifest.videoOnly.toList();
+
+        // 🔥 SORT BY RESOLUTION (STRING SAFE METHOD)
+        streams.sort((a, b) {
+          int getRes(String q) {
+            if (q.contains('2160')) return 2160; // 4K
+            if (q.contains('1440')) return 1440;
+            if (q.contains('1080')) return 1080;
+            if (q.contains('720')) return 720;
+            if (q.contains('480')) return 480;
+            if (q.contains('360')) return 360;
+            return 0;
+          }
+
+          return getRes(b.videoQuality.toString())
+              .compareTo(getRes(a.videoQuality.toString()));
+        });
+
+        streamUrl = streams.first.url.toString();
+      }
+
+      /// fallback (rare case)
+      else if (manifest.muxed.isNotEmpty) {
         streamUrl =
             manifest.muxed.withHighestBitrate().url.toString();
       }
 
-      /// fallback (rare)
-      else if (manifest.streams.isNotEmpty) {
-        streamUrl = manifest.streams.first.url.toString();
-      }
-
       if (streamUrl == null) {
-        throw "No downloadable stream found.";
+        throw "No stream found.";
       }
 
       return {
@@ -88,9 +98,6 @@ class YouTubeService {
         'thumbnail': video.thumbnails.highResUrl,
         'author': video.author,
       };
-
-    } on VideoUnavailableException {
-      throw "Video is unavailable.";
     } catch (e) {
       throw "Error: ${e.toString()}";
     }
