@@ -19,7 +19,6 @@ dependencies:
   chewie: ^1.13.0       
   cached_network_image: ^3.3.1
   photo_manager: ^3.9.0
-  youtube_explode_dart: ^3.0.5
   screen_brightness: ^2.1.7
   shared_preferences: ^2.2.2
   subtitle: ^0.1.0
