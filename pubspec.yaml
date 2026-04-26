@@ -12,21 +12,20 @@ dependencies:
   cupertino_icons: ^1.0.6
   http: ^1.2.0
   dio: ^5.4.0
-  path_provider: ^2.1.5
+  path_provider: ^2.1.2
   permission_handler: ^11.3.0
   media_scanner: ^2.2.0
   video_player: ^2.10.1  
   chewie: ^1.13.0       
   cached_network_image: ^3.3.1
   photo_manager: ^3.9.0
+  youtube_explode_dart: ^3.0.5
   screen_brightness: ^2.1.7
   shared_preferences: ^2.2.2
   subtitle: ^0.1.0
   volume_controller: ^2.0.3  
   audio_service: ^0.18.12
   just_audio: ^0.9.36
-  flutter_inappwebview: ^6.1.4
-
 
 flutter:
   uses-material-design: true
