@@ -104,26 +104,32 @@ def extract_media(url: str):
 
     for cookie_path in cookie_list:
         ydl_opts = {
-    # এখানে শুধুমাত্র ভিডিও স্ট্রিম সিলেক্ট করা হয়েছে। 
-    # এতে FFmpeg ছাড়াই হাই-কোয়ালিটি ভিডিও ডাউনলোড হবে।
-    "format": "bestvideo[ext=mp4]/bestvideo/best", 
-    
-    "quiet": True,
-    "no_warnings": True,
-    "noplaylist": True,
-    "socket_timeout": 45,
-    "retries": 10,
-    "nocheckcertificate": True,
-    "geo_bypass": True,
-    "user_agent": random.choice(USER_AGENTS),
+            # 'best[ext=mp4]' দিলে FFmpeg ছাড়াই অডিও-ভিডিও একসাথে প্লেয়বল ফাইল পাবেন
+            "format": "best[ext=mp4]/best",
+            
+            "quiet": True,
+            "no_warnings": True,
+            "noplaylist": True,
+            "socket_timeout": 60,
+            "retries": 15, # রিট্রাই বাড়ানো হয়েছে
+            "nocheckcertificate": True,
+            "geo_bypass": True,
+            
+            # রেন্ডম ইউজার এজেন্ট এর বদলে একটি স্ট্যাবল এন্ড্রয়েড ইউজার এজেন্ট ব্যবহার করুন
+            "user_agent": "Mozilla/5.0 (Linux; Android 14; Pixel 😎 AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Mobile Safari/537.36",
+            
             "http_headers": {
-                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
-                "Accept-Language": "en-US,en;q=0.5",
-                "Referer": "https://www.google.com/",
+                "User-Agent": "Mozilla/5.0 (Linux; Android 14; Pixel 😎 AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Mobile Safari/537.36",
+                "Referer": "https://www.youtube.com/",
+                "Accept-Language": "en-US,en;q=0.9",
             },
+            
             "extractor_args": {
-                # এখানে Android এবং iOS ক্লায়েন্ট যোগ করা হয়েছে যাতে মোবাইলে লিঙ্ক প্লে হয়
-                "youtube": {"player_client": ["android", "ios", "mweb", "tv"], "player_skip": ["webpage", "configs"]},
+                # 'android' ক্লায়েন্ট ইউটিউবের জন্য সবচেয়ে কম রেস্ট্রিকশন যুক্ত
+                "youtube": {
+                    "player_client": ["android"], 
+                    "player_skip": ["webpage", "configs"]
+                },
                 "instagram": {"force_subtitles": False},
                 "facebook": {"force_generic_extractor": False}
             }
