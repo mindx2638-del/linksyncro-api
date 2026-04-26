@@ -1,126 +1,126 @@
-import 'dart:convert';
-import 'package:http/http.dart' as http;
 import 'package:youtube_explode_dart/youtube_explode_dart.dart';
 
-/// =============================
-/// Custom Exception
-/// =============================
-class YouTubeException implements Exception {
-  final String message;
-  YouTubeException(this.message);
-
-  @override
-  String toString() => message;
-}
-
-/// =============================
-/// YouTube Service
-/// =============================
 class YouTubeService {
   final YoutubeExplode _yt = YoutubeExplode();
 
-  final String _backendUrl = "https://linksyncro-api.onrender.com/get_media";
-  final String _apiKey = "demo_key_123";
-
-  /// =============================
-  /// 1. Validate YouTube URL (All types)
-  /// =============================
+  /// 1. Validate if the URL is a YouTube link
   bool isYouTubeLink(String url) {
-    if (url.trim().isEmpty) return false;
-
-    final uri = Uri.tryParse(url.trim());
+    if (url.isEmpty) return false;
+    // Clean unnecessary characters or punctuation from the end of the URL
+    final String cleanUrl = url.trim().replaceAll(RegExp(r'[।—\s]+$'), '');
+    final uri = Uri.tryParse(cleanUrl);
     if (uri == null) return false;
-
-    final host = uri.host.toLowerCase();
-
-    return host.contains('youtube.com') ||
-        host.contains('youtu.be') ||
-        host.contains('m.youtube.com') ||
-        host.contains('music.youtube.com');
+    return uri.host.contains('youtube.com') || uri.host.contains('youtu.be');
   }
 
-  /// =============================
-  /// 2. Extract Video ID safely (All formats)
-  /// =============================
+  /// 2. Extract Video ID from different YouTube URL formats
   String? _extractVideoId(String url) {
     try {
-      return VideoId(url).value;
+      // Remove Bengali punctuation (।, —) or spaces from the end of the URL
+      final String cleanUrl = url.trim().replaceAll(RegExp(r'[।—\s]+$'), '');
+
+      final uri = Uri.parse(cleanUrl);
+
+      // a) youtu.be/<id> (Shortened URL)
+      if (uri.host.contains('youtu.be')) {
+        return uri.pathSegments.isNotEmpty ? uri.pathSegments.first : null;
+      }
+
+      // b) youtube.com/watch?v=<id> (Normal Desktop URL)
+      if (uri.queryParameters.containsKey('v')) {
+        return uri.queryParameters['v'];
+      }
+
+      // c) youtube.com/shorts/<id> (Shorts URL)
+      if (uri.pathSegments.contains('shorts')) {
+        return uri.pathSegments.last;
+      }
+
+      // d) youtube.com/live/<id> (Live Stream URL)
+      if (uri.pathSegments.contains('live')) {
+        return uri.pathSegments.last;
+      }
+
+      // e) youtube.com/embed/<id> (Embedded URL)
+      if (uri.pathSegments.contains('embed')) {
+        return uri.pathSegments.last;
+      }
+
+      // f) Strong Regex fallback (In case other patterns miss)
+      final RegExp regExp = RegExp(
+          r'^.*(?:(?:youtu\.be\/|v\/|vi\/|u\/\w\/|embed\/|shorts\/|live\/)|(?:(?:watch)?\?v(?:i)?=|\&v(?:i)?=))([^#\&\?]*).*');
+      final match = regExp.firstMatch(cleanUrl);
+      
+      if (match != null && match.groupCount >= 1) {
+        final String? id = match.group(1);
+        if (id != null && id.length == 11) return id;
+      }
+      
+      return null;
     } catch (_) {
       return null;
     }
   }
 
-  /// =============================
-  /// 3. Fetch Metadata (Safe & Stable)
-  /// =============================
-  Future<Map<String, String>> fetchVideoMetadata(String url) async {
+  /// 3. Get video details and download URL
+  Future<Map<String, String>> getVideoDetails(String url) async {
     try {
-      if (!isYouTubeLink(url)) {
-        throw YouTubeException("Invalid YouTube URL");
-      }
-
       final videoId = _extractVideoId(url);
       if (videoId == null) {
-        throw YouTubeException("Video ID not found");
+        throw "Invalid video ID. Please check the URL.";
       }
 
       final video = await _yt.videos.get(videoId);
 
-      return {
-        'title': video.title ?? "No Title",
-        'author': video.author ?? "Unknown",
-        'thumbnail': video.thumbnails.highResUrl ??
-            video.thumbnails.mediumResUrl ??
-            "",
-        'videoId': videoId,
-      };
+      /// Check if video is Live or Upcoming
+      if (video.duration == null || video.duration!.inSeconds == 0) {
+        throw "Live or upcoming videos cannot be downloaded.";
+      }
+
+      final manifest = await _yt.videos.streamsClient.getManifest(videoId);
+      String? streamUrl;
+
+      // Priority 1: Muxed Stream (Video + Audio)
+      if (manifest.muxed.isNotEmpty) {
+        streamUrl = manifest.muxed.withHighestBitrate().url.toString();
+      } 
+      // Priority 2: Video Only
+      else if (manifest.videoOnly.isNotEmpty) {
+        streamUrl = manifest.videoOnly.withHighestBitrate().url.toString();
+      } 
+      // Priority 3: First available stream
+      else if (manifest.streams.isNotEmpty) {
+        streamUrl = manifest.streams.first.url.toString();
+      }
+
+      if (streamUrl == null) {
+        throw "No downloadable stream found.";
+      }
+
+      return _buildResponse(video, streamUrl);
+    } on VideoUnavailableException {
+      throw "Video is unavailable (Private or Removed).";
     } catch (e) {
-      throw YouTubeException("Problem loading metadata: $e");
+      throw "Error: ${e.toString().replaceAll("Exception:", "")}";
     }
   }
 
-  /// =============================
-  /// 4. Get HD Download URL (Backend Safe)
-  /// =============================
-  Future<String> getHdDownloadUrl(String url) async {
-  try {
-    if (!isYouTubeLink(url)) {
-      throw YouTubeException("Invalid YouTube URL");
-    }
-
-    final String encodedUrl = Uri.encodeComponent(url);
-    final String fullUrl = "$_backendUrl?url=$encodedUrl";
-    
-    print("Sending Request to: $fullUrl"); // চেক ১: ইউআরএল ঠিক আছে কিনা
-
-    final response = await http.get(
-      Uri.parse(fullUrl), 
-      headers: {"x-api-key": _apiKey}
-    ).timeout(const Duration(seconds: 45));
-
-    print("Response Status Code: ${response.statusCode}"); // চেক ২: স্ট্যাটাস কোড কি ২০০?
-    print("Response Body: ${response.body}"); // চেক ৩: সার্ভার আসলে কি বলছে?
-
-    if (response.statusCode != 200) {
-      throw YouTubeException("Server Error: ${response.statusCode}");
-    }
-
-    final data = jsonDecode(response.body);
-
-    if (data == null || data['url'] == null) {
-      throw YouTubeException("Invalid server response");
-    }
-
-    return data['url'];
-  } catch (e) {
-    print("FATAL ERROR in getHdDownloadUrl: $e"); // চেক ৪: আসল এররটা এখানে দেখাবে
-    throw YouTubeException("Failed to fetch hd link: $e");
+  /// 4. Build response map
+  Map<String, String> _buildResponse(Video video, String streamUrl) {
+    return {
+      'title': _safeFileName(video.title),
+      'url': streamUrl,
+      'thumbnail': video.thumbnails.highResUrl,
+      'author': video.author,
+    };
   }
-}
 
-  /// =============================
-  /// 5. Dispose (Memory Safe)
-  /// =============================
+  /// 5. Clean filename to avoid FileSystemException (Error 36)
+  String _safeFileName(String input) {
+    return input.replaceAll(RegExp(r'[<>:"/\\|?*]'), '_').trim();
+  }
+
+  /// 6. Dispose resources
   void close() {
     _yt.close();
   }
