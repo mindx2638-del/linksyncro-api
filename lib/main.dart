@@ -169,48 +169,72 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<void> _startDownloadProcess(DownloadTask task) async {
-    try {
-      final result = await _resolveLink(task.inputUrl);
-      setState(() {
-        task.downloadUrl = result['url'];
-        task.videoTitle = result['title'] ?? "Video_${task.id}";
-        task.thumbnailUrl = result['thumbnail'];
-      });
+  try {
+    setState(() => task.statusText = "Resolving link...");
 
-      if (task.downloadUrl == null) throw "Invalid response from server";
+    // ১. লিঙ্ক থেকে ভিডিও ডেটা আনা
+    final result = await _resolveLink(task.inputUrl);
+    
+    setState(() {
+      task.downloadUrl = result['url'];
+      task.videoTitle = result['title'] ?? "Video_${task.id}";
+      task.thumbnailUrl = result['thumbnail'];
+      task.statusText = "Starting download...";
+    });
 
-      const root = "/storage/emulated/0";
-      final folder = Directory("$root/Download/LinkSyncro");
-      if (!await folder.exists()) await folder.create(recursive: true);
-
-      // ফাইল নেম ক্লিনিং এবং লেন্থ লিমিট (Error 36 Fix)
-      String cleanName = task.videoTitle!.replaceAll(RegExp(r'[<>:"/\\|?*]'), '').trim();
-      if (cleanName.length > 50) {
-        cleanName = cleanName.substring(0, 50).trim();
-      }
-      if (cleanName.isEmpty) cleanName = "Video_${task.id}";
-
-      task.savePath = "${folder.path}/$cleanName.mp4";
-      await _executeDownload(task);
-    } catch (e) {
-      _handleTaskError(task, e);
+    if (task.downloadUrl == null || task.downloadUrl!.isEmpty) {
+      throw "Invalid response from server";
     }
+
+    // ২. ফোল্ডার তৈরি
+    const root = "/storage/emulated/0";
+    final folder = Directory("$root/Download/LinkSyncro");
+    if (!await folder.exists()) await folder.create(recursive: true);
+
+    // ৩. ফাইলের নাম ক্লিন করা (Error 36 Fix)
+    String cleanName = task.videoTitle!.replaceAll(RegExp(r'[<>:"/\\|?*]'), '_').trim();
+    if (cleanName.length > 50) cleanName = cleanName.substring(0, 50).trim();
+    if (cleanName.isEmpty) cleanName = "Video_${task.id}";
+
+    task.savePath = "${folder.path}/$cleanName.mp4";
+
+    // ৪. ডাউনলোড শুরু করা
+    await _executeDownload(task);
+    
+  } catch (e) {
+    _handleTaskError(task, e);
   }
+}
 
   Future<Map<String, dynamic>> _resolveLink(String input) async {
+  try {
+    // ১. আপনার লোকাল সার্ভিসগুলো দিয়ে দ্রুত চেক করা (যদি সম্ভব হয়)
     if (_ytService.isYouTubeLink(input)) return await _ytService.getVideoDetails(input);
     if (_fbService.isFacebookLink(input)) return await _fbService.getVideoDetails(input);
     if (_igService.isInstagramLink(input)) return await _igService.getVideoDetails(input);
 
-    const String proxyUrl = "https://script.google.com/macros/s/AKfycbxsns846mdhcNrberwkvdB12yJ58pVg3yE6b4tbvp6rOWPxdjYvN7xeEDbIfID0_CrqJg/exec";
-    final uri = Uri.parse("$proxyUrl?url=${Uri.encodeComponent(input)}");
+    // ২. লোকাল সার্ভিস কাজ না করলে আপনার মেইন Python Backend ব্যবহার করা
+    const String apiUrl = "https://linksyncro-api.onrender.com/get_media";
+    final uri = Uri.parse("$apiUrl?url=${Uri.encodeComponent(input)}");
 
-    final response = await http.get(uri).timeout(const Duration(seconds: 45));
+    final response = await http.get(
+      uri, 
+      headers: {
+        "x-api-key": "demo_key_123", // আপনার API Key
+        "Accept": "application/json",
+      },
+    ).timeout(const Duration(seconds: 45));
+
     if (response.statusCode == 200) {
       return jsonDecode(utf8.decode(response.bodyBytes));
+    } else {
+      throw "Server returned status: ${response.statusCode}";
     }
-    throw "Proxy server failed to respond";
+  } catch (e) {
+    throw "Link Resolution Failed: ${e.toString().replaceAll("Exception:", "")}";
   }
+}
+
 
   Future<void> _executeDownload(DownloadTask task) async {
     RandomAccessFile? raf;
