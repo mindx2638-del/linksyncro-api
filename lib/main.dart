@@ -198,47 +198,19 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<Map<String, dynamic>> _resolveLink(String input) async {
-  try {
-    Map<String, dynamic>? result;
+    if (_ytService.isYouTubeLink(input)) return await _ytService.getVideoDetails(input);
+    if (_fbService.isFacebookLink(input)) return await _fbService.getVideoDetails(input);
+    if (_igService.isInstagramLink(input)) return await _igService.getVideoDetails(input);
 
-    // ১. সার্ভিস চেক করা
-    if (_ytService.isYouTubeLink(input)) {
-      print("Calling YouTubeService...");
-      result = await _ytService.getVideoDetails(input);
-    } else if (_fbService.isFacebookLink(input)) {
-      print("Calling FacebookService...");
-      result = await _fbService.getVideoDetails(input);
-    } else if (_igService.isInstagramLink(input)) {
-      print("Calling InstagramService...");
-      result = await _igService.getVideoDetails(input);
-    } else {
-      // ২. ফলব্যাক প্রক্সি সার্ভিস
-      print("Calling Proxy Service...");
-      const String proxyUrl = "https://script.google.com/macros/s/AKfycbxsns846mdhcNrberwkvdB12yJ58pVg3yE6b4tbvp6rOWPxdjYvN7xeEDbIfID0_CrqJg/exec";
-      final uri = Uri.parse("$proxyUrl?url=${Uri.encodeComponent(input)}");
-      
-      final response = await http.get(uri).timeout(const Duration(seconds: 45));
-      if (response.statusCode == 200) {
-        result = jsonDecode(utf8.decode(response.bodyBytes));
-      } else {
-        throw "Proxy server failed with status: ${response.statusCode}";
-      }
+    const String proxyUrl = "https://script.google.com/macros/s/AKfycbxsns846mdhcNrberwkvdB12yJ58pVg3yE6b4tbvp6rOWPxdjYvN7xeEDbIfID0_CrqJg/exec";
+    final uri = Uri.parse("$proxyUrl?url=${Uri.encodeComponent(input)}");
+
+    final response = await http.get(uri).timeout(const Duration(seconds: 45));
+    if (response.statusCode == 200) {
+      return jsonDecode(utf8.decode(response.bodyBytes));
     }
-
-    // ৩. ডেটা ভ্যালিডেশন (সবচেয়ে গুরুত্বপূর্ণ ধাপ)
-    print("Resolved Result: $result"); // এখানে দেখুন ঠিকমতো ডাটা আসছে কি না
-    
-    if (result == null || !result.containsKey('url')) {
-      throw "Invalid response format: 'url' key missing.";
-    }
-
-    return result;
-    
-  } catch (e) {
-    print("ResolveLink Error: $e"); // এররটি কনসোলে প্রিন্ট হবে
-    rethrow; // এররটি উপরের ফাংশনে পাঠিয়ে দিন
+    throw "Proxy server failed to respond";
   }
-}
 
   Future<void> _executeDownload(DownloadTask task) async {
     RandomAccessFile? raf;

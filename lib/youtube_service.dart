@@ -2,23 +2,22 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 
 class YouTubeService {
+  // আপনার FastAPI এন্ডপয়েন্ট (অন্যান্য সার্ভিসের মতো একই)
   static const String _apiUrl = "https://linksyncro-api.onrender.com/get_media";
   static const String _apiKey = "demo_key_123";
 
-  // URL ভ্যালিডেশন লজিক (এটিAPI কল করার আগেই চেক করার জন্য দরকার)
+  // ইউটিউব লিংক কিনা চেক করার লজিক
   bool isYouTubeLink(String url) {
-    if (url.isEmpty) return false;
-    final String cleanUrl = url.trim().replaceAll(RegExp(r'[à¥¤â€”\s]+$'), '');
-    final uri = Uri.tryParse(cleanUrl);
-    if (uri == null) return false;
-    return uri.host.contains('youtube.com') || uri.host.contains('youtu.be');
+    String lowerUrl = url.toLowerCase();
+    return lowerUrl.contains("youtube.com") || lowerUrl.contains("youtu.be");
   }
 
-  // ভিডিও ডিটেইলস ফেচ করা (শুধুমাত্র API ভিত্তিক)
+  // সার্ভার থেকে ডাটা আনার ফাংশন
   Future<Map<String, dynamic>> getVideoDetails(String url) async {
     try {
+      final uri = Uri.parse("$_apiUrl?url=${Uri.encodeComponent(url)}");
       final response = await http.get(
-        Uri.parse("$_apiUrl?url=${Uri.encodeComponent(url.trim())}"),
+        uri,
         headers: {
           "x-api-key": _apiKey,
           "Accept": "application/json",
@@ -26,22 +25,13 @@ class YouTubeService {
       ).timeout(const Duration(seconds: 45));
 
       if (response.statusCode == 200) {
-        final data = jsonDecode(response.body);
-        if (data['status'] == 'success') {
-          return {
-            'url': data['url'],
-            'title': data['title'] ?? "YouTube_Video",
-            'thumbnail': data['thumbnail'],
-            'source': "YouTube",
-          };
-        } else {
-          throw data['message'] ?? "Failed to fetch video details.";
-        }
+        return jsonDecode(utf8.decode(response.bodyBytes));
       } else {
         throw "Server Error: ${response.statusCode}";
       }
     } catch (e) {
-      throw "Could not retrieve YouTube video: $e";
+      print("YouTube Service Error: $e");
+      rethrow;
     }
   }
 }
