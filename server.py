@@ -209,6 +209,35 @@ async def get_media(url: str, request: Request):
         logging.error(f"Critical Error: {str(e)}")
         raise HTTPException(status_code=500, detail="Internal server error")
 
+@app.get("/get_video_info")
+async def get_video_info(url: str):
+    # API Key চেক করা
+    # (আপনার আগের মতই API Key ভ্যালিডেশন এখানেও রাখা উচিত)
+    
+    ydl_opts = {"quiet": True, "no_warnings": True}
+    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+        info = ydl.extract_info(url, download=False)
+        formats = []
+        
+        # ফরম্যাটগুলো ফিল্টার করা
+        for f in info.get("formats", []):
+            # ভিডিও ও অডিও আছে এমন ফরম্যাটগুলো নিন
+            if f.get("vcodec") != "none" and f.get("acodec") != "none":
+                file_size = f.get("filesize") or f.get("filesize_approx") or 0
+                formats.append({
+                    "format_id": f.get("format_id"),
+                    "resolution": f.get("resolution") or "Unknown",
+                    "ext": f.get("ext"),
+                    "size_mb": round(file_size / (1024 * 1024), 2),
+                    "url": f.get("url")
+                })
+        
+        return {
+            "title": info.get("title", "Video"),
+            "thumbnail": info.get("thumbnail"),
+            "formats": formats
+        }
+
 # -----------------------------
 # RUNNER
 # -----------------------------

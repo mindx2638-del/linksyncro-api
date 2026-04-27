@@ -24,7 +24,7 @@ late MyAudioHandler audioHandler;
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  audioHandler = await AudioService.init(
+  audioHandler = await AudioService.init( Dio _dio = Dio(BaseOptions(...));
     builder: () => MyAudioHandler(),
     config: const AudioServiceConfig(
       androidNotificationChannelId: 'com.linksyncro.pro.audio',
@@ -126,6 +126,8 @@ class _HomeScreenState extends State<HomeScreen> {
     connectTimeout: const Duration(seconds: 30),
     receiveTimeout: const Duration(minutes: 20),
   ));
+
+  final String baseUrl = "https://linksyncro-api.onrender.com"; 
 
   Future<void> _pasteFromClipboard() async {
     final data = await Clipboard.getData('text/plain');
@@ -465,7 +467,7 @@ Widget build(BuildContext context) {
                     elevation: 0,
                     shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
                   ),
-                  onPressed: _addNewDownload,
+                  onPressed: _fetchAndShowQualities, 
                   child: const Text(
                     "DOWNLOAD NOW", 
                     style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)
@@ -599,4 +601,73 @@ Widget build(BuildContext context) {
       ),
     );
   }
+
+  void _fetchAndShowQualities() async {
+  final input = _urlController.text.trim();
+  if (input.isEmpty) {
+    _showToast("Please paste a link first", isError: true);
+    return;
+  }
+
+  _showToast("Fetching video details...");
+
+  try {
+    // সার্ভার থেকে ভিডিওর তথ্য আনা
+    final response = await http.get(Uri.parse("$baseUrl/get_video_info?url=${Uri.encodeComponent(input)}"));
+    
+    if (response.statusCode == 200) {
+      final data = jsonDecode(response.body);
+      
+      // নিচ থেকে মেনু আসা (Bottom Sheet)
+      showModalBottomSheet(
+        context: context,
+        builder: (context) {
+          return Container(
+            padding: const EdgeInsets.all(16),
+            child: ListView.builder(
+              shrinkWrap: true,
+              itemCount: data['formats'].length,
+              itemBuilder: (context, index) {
+                var fmt = data['formats'][index];
+                return ListTile(
+                  title: Text("${fmt['resolution']} (${fmt['ext']})"),
+                  subtitle: Text("${fmt['size_mb']} MB"),
+                  leading: const Icon(Icons.download_for_offline),
+                  onTap: () {
+                    Navigator.pop(context); 
+                    _startManualDownload(input, fmt['url'], data['title']);
+                  },
+                );
+              },
+            ),
+          );
+        },
+      );
+    } else {
+      _showToast("Failed to fetch info", isError: true);
+    }
+  } catch (e) {
+    _showToast("Error: $e", isError: true);
+  }
+}
+
+void _startManualDownload(String inputUrl, String downloadUrl, String title) async {
+  if (!await _handlePermissions()) return;
+
+  final task = DownloadTask(
+    id: DateTime.now().millisecondsSinceEpoch.toString(),
+    inputUrl: inputUrl,
+    videoTitle: title,
+    downloadUrl: downloadUrl, // সার্ভার থেকে পাওয়া লিঙ্ক
+  );
+
+  setState(() {
+    _downloadTasks.insert(0, task);
+    _urlController.clear();
+  });
+
+  _executeDownload(task); // ডাউনলোড শুরু করা
+}
+
+
 }
