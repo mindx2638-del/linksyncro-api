@@ -145,130 +145,72 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   void _addNewDownload() async {
-  final input = _urlController.text.trim();
-  if (input.isEmpty) {
-    _showToast("Please paste a link first", isError: true);
-    return;
-  }
-  if (!await _handlePermissions()) {
-    _showToast("Storage permission denied!", isError: true);
-    return;
-  }
-
-  // সরাসরি ডাউনলোড শুরু না করে আগে কোয়ালিটি লিস্ট চেক করবে
-  await _fetchAndShowFormats(input);
-  _urlController.clear();
-}
-
-Future<void> _fetchAndShowFormats(String url) async {
-  try {
-    showDialog(context: context, barrierDismissible: false, builder: (_) => const Center(child: CircularProgressIndicator()));
-    
-    // আপনার সার্ভারের এন্ডপয়েন্ট
-    final response = await http.get(Uri.parse("YOUR_SERVER_URL/get_formats?url=$url"));
-    Navigator.pop(context);
-
-    if (response.statusCode == 200) {
-      final data = jsonDecode(response.body);
-      _showQualityModal(data['formats'], url, data['title'], data['thumbnail']);
-    } else {
-      _showToast("Failed to fetch formats", isError: true);
+    final input = _urlController.text.trim();
+    if (input.isEmpty) {
+      _showToast("Please paste a link first", isError: true);
+      return;
     }
-  } catch (e) {
-    Navigator.pop(context);
-    _showToast("Error: $e", isError: true);
-  }
-}
+    if (!await _handlePermissions()) {
+      _showToast("Storage permission denied!", isError: true);
+      return;
+    }
 
-void _showQualityModal(List formats, String url, String title, String thumb) {
-  showModalBottomSheet(
-    context: context,
-    builder: (context) => Container(
-      padding: const EdgeInsets.all(20),
-      height: 300,
-      child: ListView.builder(
-        itemCount: formats.length,
-        itemBuilder: (context, index) {
-          final f = formats[index];
-          return ListTile(
-            title: Text("${f['resolution']} - ${f['ext']}"),
-            onTap: () {
-              Navigator.pop(context);
-              _startDownloadWithFormat(url, f['format_id'], title, thumb);
-            },
-          );
-        },
-      ),
-    ),
-  );
-}
+    final task = DownloadTask(
+      id: DateTime.now().millisecondsSinceEpoch.toString(),
+      inputUrl: input,
+    );
 
-void _startDownloadWithFormat(String url, String formatId, String title, String thumb) {
-  final task = DownloadTask(
-    id: DateTime.now().millisecondsSinceEpoch.toString(),
-    inputUrl: url,
-    videoTitle: title,
-    thumbnailUrl: thumb,
-  );
-  
-  setState(() { _downloadTasks.insert(0, task); });
-  _startDownloadProcess(task, formatId); // নতুন ফরম্যাট আইডি পাস করছি
-}
-
-Future<void> _startDownloadProcess(DownloadTask task, String formatId) async {
-  try {
-    // এখানে formatId: formatId ব্যবহার করতে হবে (Named Parameter)
-    final result = await _resolveLink(task.inputUrl, formatId: formatId); 
-    
     setState(() {
-      task.downloadUrl = result['url'];
-      task.videoTitle = result['title'] ?? "Video_${task.id}";
-      task.thumbnailUrl = result['thumbnail'];
+      _downloadTasks.insert(0, task);
+      _urlController.clear();
     });
 
-    if (task.downloadUrl == null) throw "Invalid response from server";
+    _startDownloadProcess(task);
+  }
 
-    const root = "/storage/emulated/0";
-    final folder = Directory("$root/Download/LinkSyncro");
-    if (!await folder.exists()) await folder.create(recursive: true);
+  Future<void> _startDownloadProcess(DownloadTask task) async {
+    try {
+      final result = await _resolveLink(task.inputUrl);
+      setState(() {
+        task.downloadUrl = result['url'];
+        task.videoTitle = result['title'] ?? "Video_${task.id}";
+        task.thumbnailUrl = result['thumbnail'];
+      });
 
-    // ফাইল নেম ক্লিনিং এবং লেন্থ লিমিট
-    String cleanName = task.videoTitle!.replaceAll(RegExp(r'[<>:"/\\|?*]'), '').trim();
-    if (cleanName.length > 50) {
-      cleanName = cleanName.substring(0, 50).trim();
+      if (task.downloadUrl == null) throw "Invalid response from server";
+
+      const root = "/storage/emulated/0";
+      final folder = Directory("$root/Download/LinkSyncro");
+      if (!await folder.exists()) await folder.create(recursive: true);
+
+      // ফাইল নেম ক্লিনিং এবং লেন্থ লিমিট (Error 36 Fix)
+      String cleanName = task.videoTitle!.replaceAll(RegExp(r'[<>:"/\\|?*]'), '').trim();
+      if (cleanName.length > 50) {
+        cleanName = cleanName.substring(0, 50).trim();
+      }
+      if (cleanName.isEmpty) cleanName = "Video_${task.id}";
+
+      task.savePath = "${folder.path}/$cleanName.mp4";
+      await _executeDownload(task);
+    } catch (e) {
+      _handleTaskError(task, e);
     }
-    if (cleanName.isEmpty) cleanName = "Video_${task.id}";
-
-    task.savePath = "${folder.path}/$cleanName.mp4";
-    await _executeDownload(task);
-  } catch (e) {
-    _handleTaskError(task, e);
-  }
-}
-
-  Future<Map<String, dynamic>> _resolveLink(String input, {String? formatId}) async {
-  // ১. যদি ইউটিউব/ফেসবুক/ইনস্টাগ্রাম সার্ভিস হয়
-  if (_ytService.isYouTubeLink(input)) return await _ytService.getVideoDetails(input);
-  if (_fbService.isFacebookLink(input)) return await _fbService.getVideoDetails(input);
-  if (_igService.isInstagramLink(input)) return await _igService.getVideoDetails(input);
-
-  // ২. যদি প্রক্সি সার্ভার হয়
-  const String proxyUrl = "https://script.google.com/macros/s/AKfycbxsns846mdhcNrberwkvdB12yJ58pVg3yE6b4tbvp6rOWPxdjYvN7xeEDbIfID0_CrqJg/exec";
-  
-  // URL তৈরি করার সময় formatId চেক করা হচ্ছে
-  String finalUrl = "$proxyUrl?url=${Uri.encodeComponent(input)}";
-  if (formatId != null && formatId.isNotEmpty) {
-    finalUrl += "&format_id=$formatId";
   }
 
-  final uri = Uri.parse(finalUrl);
+  Future<Map<String, dynamic>> _resolveLink(String input) async {
+    if (_ytService.isYouTubeLink(input)) return await _ytService.getVideoDetails(input);
+    if (_fbService.isFacebookLink(input)) return await _fbService.getVideoDetails(input);
+    if (_igService.isInstagramLink(input)) return await _igService.getVideoDetails(input);
 
-  final response = await http.get(uri).timeout(const Duration(seconds: 45));
-  if (response.statusCode == 200) {
-    return jsonDecode(utf8.decode(response.bodyBytes));
+    const String proxyUrl = "https://script.google.com/macros/s/AKfycbxsns846mdhcNrberwkvdB12yJ58pVg3yE6b4tbvp6rOWPxdjYvN7xeEDbIfID0_CrqJg/exec";
+    final uri = Uri.parse("$proxyUrl?url=${Uri.encodeComponent(input)}");
+
+    final response = await http.get(uri).timeout(const Duration(seconds: 45));
+    if (response.statusCode == 200) {
+      return jsonDecode(utf8.decode(response.bodyBytes));
+    }
+    throw "Proxy server failed to respond";
   }
-  throw "Proxy server failed to respond";
-}
 
   Future<void> _executeDownload(DownloadTask task) async {
     RandomAccessFile? raf;

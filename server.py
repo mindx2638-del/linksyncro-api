@@ -209,44 +209,6 @@ async def get_media(url: str, request: Request):
         logging.error(f"Critical Error: {str(e)}")
         raise HTTPException(status_code=500, detail="Internal server error")
 
-
-@app.get("/get_formats")
-async def get_formats(url: str):
-    domain = urlparse(url).hostname or ""
-    cookie_list = [None] 
-    cookie_list.extend(get_cookie_files(domain))
-    
-    # প্রথম কুকিটি ব্যবহারের চেষ্টা করবে
-    ydl_opts = {"quiet": True, "noplaylist": True, "user_agent": random.choice(USER_AGENTS)}
-    if cookie_list and cookie_list[0]:
-        ydl_opts["cookiefile"] = cookie_list[0]
-
-    try:
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(url, download=False)
-            
-            formats = []
-            for f in info.get("formats", []):
-                # রেজোলিউশন এবং এক্সটেনশন চেক
-                if f.get("vcodec") != "none" and f.get("acodec") != "none" and f.get("height"):
-                    formats.append({
-                        "format_id": f.get("format_id"),
-                        "resolution": f"{f.get('height')}p",
-                        "ext": f.get('ext', 'mp4'),
-                        "filesize": f.get("filesize_approx", 0)
-                    })
-            
-            formats.sort(key=lambda x: int(x['resolution'].replace('p', '')), reverse=True)
-            
-            return {
-                "title": info.get("title"),
-                "thumbnail": info.get("thumbnail"),
-                "formats": formats
-            }
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
-    
-
 # -----------------------------
 # RUNNER
 # -----------------------------
