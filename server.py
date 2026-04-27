@@ -154,8 +154,6 @@ def extract_media(url: str):
                                         "label": f"{height}p",
                                         "url": f.get("url")
                                     })
-
-                        if not formats_list:formats_list.append({"label": "Default/Best", "url": download_url})          
                         # রেজল্যুশন অনুযায়ী সাজানো
                         formats_list.sort(key=lambda x: int(x['label'].replace('p', '')), reverse=True)
 
