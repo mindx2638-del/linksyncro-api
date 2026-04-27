@@ -145,45 +145,28 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   void _addNewDownload() async {
-  final input = _urlController.text.trim();
-  if (input.isEmpty) {
-    _showToast("Please paste a link first", isError: true);
-    return;
-  }
-
-  try {
-    final qualities = await _getQualityList(input);
-
-    if (qualities.isEmpty) {
-      _showToast("No quality found", isError: true);
+    final input = _urlController.text.trim();
+    if (input.isEmpty) {
+      _showToast("Please paste a link first", isError: true);
+      return;
+    }
+    if (!await _handlePermissions()) {
+      _showToast("Storage permission denied!", isError: true);
       return;
     }
 
-    if (!mounted) return;
-
-    showModalBottomSheet(
-      context: context,
-      builder: (_) {
-        return ListView.builder(
-          itemCount: qualities.length,
-          itemBuilder: (context, index) {
-            final item = qualities[index];
-
-            return ListTile(
-              title: Text(item['label']),
-              onTap: () {
-                Navigator.pop(context);
-                _startDownloadWithUrl(input, item['url']);
-              },
-            );
-          },
-        );
-      },
+    final task = DownloadTask(
+      id: DateTime.now().millisecondsSinceEpoch.toString(),
+      inputUrl: input,
     );
-  } catch (e) {
-    _showToast("Failed to load quality list", isError: true);
+
+    setState(() {
+      _downloadTasks.insert(0, task);
+      _urlController.clear();
+    });
+
+    _startDownloadProcess(task);
   }
-}
 
   Future<void> _startDownloadProcess(DownloadTask task) async {
     try {
@@ -616,71 +599,4 @@ Widget build(BuildContext context) {
       ),
     );
   }
-
-  Future<List<Map<String, dynamic>>> _getQualityList(String url) async {
-  const String proxyUrl =
-      "https://script.google.com/macros/s/AKfycbxsns846mdhcNrberwkvdB12yJ58pVg3yE6b4tbvp6rOWPxdjYvN7xeEDbIfID0_CrqJg/exec";
-
-  final uri = Uri.parse("$proxyUrl?url=${Uri.encodeComponent(url)}");
-
-  final response = await http.get(uri);
-
-  if (response.statusCode != 200) {
-    throw "Failed to fetch quality list";
-  }
-
-  final data = jsonDecode(utf8.decode(response.bodyBytes));
-
-  // backend থেকে formats আসবে ধরে নিচ্ছি
-  List formats = data['formats'];
-
-  List<Map<String, dynamic>> result = [];
-
-  for (var f in formats) {
-    int? height = f['height'];
-    bool hasAudio = f['acodec'] != null && f['acodec'] != 'none';
-
-    String qualityLabel = height != null ? "${height}p" : "Unknown";
-
-    String audioStatus = hasAudio ? "🎵 Mixed" : "🔇 N/A";
-
-    result.add({
-      "label": "$qualityLabel  ($audioStatus)",
-      "url": f['url'],
-      "height": height ?? 0,
-      "hasAudio": hasAudio,
-    });
-  }
-
-  result.sort((a, b) => b['height'].compareTo(a['height']));
-
-  return result;
-}
-
-Future<void> _startDownloadWithUrl(String inputUrl, String downloadUrl) async {
-  final task = DownloadTask(
-    id: DateTime.now().millisecondsSinceEpoch.toString(),
-    inputUrl: inputUrl,
-  );
-
-  setState(() {
-    task.downloadUrl = downloadUrl;
-    task.videoTitle = "Downloading...";
-    _downloadTasks.insert(0, task);
-  });
-
-  try {
-    const root = "/storage/emulated/0";
-    final folder = Directory("$root/Download/LinkSyncro");
-    if (!await folder.exists()) await folder.create(recursive: true);
-
-    task.savePath = "${folder.path}/video_${task.id}.mp4";
-
-    await _executeDownload(task);
-  } catch (e) {
-    _handleTaskError(task, e);
-  }
-}
-
-
 }
