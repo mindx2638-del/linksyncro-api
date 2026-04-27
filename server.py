@@ -89,7 +89,7 @@ def get_cookie_files(domain):
 # CORE ENGINE
 # -----------------------------
 def extract_media(url: str):
-    # আপনার অরিজিনাল ক্যাশ চেক লজিক
+    # Cache check (unchanged)
     cache_key = hashlib.md5(url.encode()).hexdigest()
     if cache_key in cache:
         data, ts = cache[cache_key]
@@ -98,13 +98,13 @@ def extract_media(url: str):
             return data
 
     domain = urlparse(url).hostname or ""
-    
-    cookie_list = [None] 
+
+    cookie_list = [None]
     cookie_list.extend(get_cookie_files(domain))
 
     for cookie_path in cookie_list:
         ydl_opts = {
-            "format": "best[height<=720]/best", 
+            "format": "best",  # ✅ changed (important for full quality list)
             "quiet": True,
             "no_warnings": True,
             "noplaylist": True,
@@ -114,12 +114,14 @@ def extract_media(url: str):
             "geo_bypass": True,
             "user_agent": random.choice(USER_AGENTS),
             "extractor_args": {
-                "youtube": {"player_client": ["android", "ios", "mweb", "tv"], "player_skip": ["webpage", "configs"]},
+                "youtube": {
+                    "player_client": ["android", "ios", "mweb", "tv"],
+                    "player_skip": ["webpage", "configs"]
+                },
                 "instagram": {"force_subtitles": False},
                 "facebook": {"force_generic_extractor": False}
             }
         }
-
 
         if cookie_path:
             ydl_opts["cookiefile"] = cookie_path
@@ -130,41 +132,65 @@ def extract_media(url: str):
         try:
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 info = ydl.extract_info(url, download=False)
-                
-                download_url = info.get("url")
-                
-                # আপনার অরিজিনাল ফরম্যাট সিলেকশন লজিক (পুরোটা একই রাখা হয়েছে)
-                if not download_url and "formats" in info:
-                    valid_formats = [f for f in info["formats"] if f.get("vcodec") != "none" and f.get("acodec") != "none"]
-                    if not valid_formats:
-                        valid_formats = [f for f in info["formats"] if f.get("url")]
-                    
-                    if valid_formats:
-                        valid_formats.sort(key=lambda x: (x.get("height") or 0), reverse=True)
-                        download_url = valid_formats[0]["url"]
 
-                if download_url:
+                # ✅ NEW: collect all qualities
+                formats = []
+
+                for f in info.get("formats", []):
+                    # only video + audio formats
+                    if f.get("vcodec") != "none" and f.get("acodec") != "none":
+                        height = f.get("height")
+                        size = f.get("filesize") or f.get("filesize_approx") or 0
+
+                        # optional safety: skip very high (no audio issue)
+                        if height and height > 720:
+                            continue
+
+                        formats.append({
+                            "quality": f"{height}p" if height else "unknown",
+                            "height": height,
+                            "filesize": size,
+                            "ext": f.get("ext"),
+                            "url": f.get("url")
+                        })
+
+                # sort high → low
+                formats.sort(key=lambda x: x.get("height") or 0, reverse=True)
+
+                # remove duplicate quality
+                unique_formats = []
+                seen = set()
+
+                for f in formats:
+                    h = f.get("height")
+                    if h and h not in seen:
+                        seen.add(h)
+                        unique_formats.append(f)
+
+                # ✅ final result
+                if unique_formats:
                     result = {
                         "status": "success",
-                        "url": download_url,
+                        "formats": unique_formats,
                         "title": info.get("title", "Video"),
                         "thumbnail": info.get("thumbnail"),
                         "duration": info.get("duration"),
                         "source": info.get("extractor_key", domain)
                     }
-                    
+
+                    # cache save
                     cache[cache_key] = (result, time.time())
-                    if len(cache) > 2000: # ক্যাশ লিমিট কিছুটা বাড়ানো হয়েছে
+                    if len(cache) > 2000:
                         cache.pop(next(iter(cache)))
-                    
+
                     return result
-                    
+
         except Exception as e:
             if not cookie_path:
                 logging.warning(f"Failed without cookies. Error: {str(e)}")
             else:
                 logging.error(f"Failed with cookie {cookie_path}: {str(e)}")
-            continue 
+            continue
 
     return None
 
@@ -208,35 +234,6 @@ async def get_media(url: str, request: Request):
     except Exception as e:
         logging.error(f"Critical Error: {str(e)}")
         raise HTTPException(status_code=500, detail="Internal server error")
-
-@app.get("/get_video_info")
-async def get_video_info(url: str):
-    # API Key চেক করা
-    # (আপনার আগের মতই API Key ভ্যালিডেশন এখানেও রাখা উচিত)
-    
-    ydl_opts = {"quiet": True, "no_warnings": True}
-    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-        info = ydl.extract_info(url, download=False)
-        formats = []
-        
-        # ফরম্যাটগুলো ফিল্টার করা
-        for f in info.get("formats", []):
-            # ভিডিও ও অডিও আছে এমন ফরম্যাটগুলো নিন
-            if f.get("vcodec") != "none" and f.get("acodec") != "none":
-                file_size = f.get("filesize") or f.get("filesize_approx") or 0
-                formats.append({
-                    "format_id": f.get("format_id"),
-                    "resolution": f.get("resolution") or "Unknown",
-                    "ext": f.get("ext"),
-                    "size_mb": round(file_size / (1024 * 1024), 2),
-                    "url": f.get("url")
-                })
-        
-        return {
-            "title": info.get("title", "Video"),
-            "thumbnail": info.get("thumbnail"),
-            "formats": formats
-        }
 
 # -----------------------------
 # RUNNER

@@ -24,7 +24,7 @@ late MyAudioHandler audioHandler;
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  audioHandler = await AudioService.init( Dio _dio = Dio(BaseOptions(...));
+  audioHandler = await AudioService.init(
     builder: () => MyAudioHandler(),
     config: const AudioServiceConfig(
       androidNotificationChannelId: 'com.linksyncro.pro.audio',
@@ -127,8 +127,6 @@ class _HomeScreenState extends State<HomeScreen> {
     receiveTimeout: const Duration(minutes: 20),
   ));
 
-  final String baseUrl = "https://linksyncro-api.onrender.com"; 
-
   Future<void> _pasteFromClipboard() async {
     final data = await Clipboard.getData('text/plain');
     if (data?.text != null) {
@@ -171,33 +169,58 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<void> _startDownloadProcess(DownloadTask task) async {
-    try {
-      final result = await _resolveLink(task.inputUrl);
-      setState(() {
-        task.downloadUrl = result['url'];
-        task.videoTitle = result['title'] ?? "Video_${task.id}";
-        task.thumbnailUrl = result['thumbnail'];
-      });
+  try {
+    final result = await _resolveLink(task.inputUrl);
 
-      if (task.downloadUrl == null) throw "Invalid response from server";
+    setState(() {
+      task.videoTitle = result['title'] ?? "Video_${task.id}";
+      task.thumbnailUrl = result['thumbnail'];
+    });
 
-      const root = "/storage/emulated/0";
-      final folder = Directory("$root/Download/LinkSyncro");
-      if (!await folder.exists()) await folder.create(recursive: true);
-
-      // ফাইল নেম ক্লিনিং এবং লেন্থ লিমিট (Error 36 Fix)
-      String cleanName = task.videoTitle!.replaceAll(RegExp(r'[<>:"/\\|?*]'), '').trim();
-      if (cleanName.length > 50) {
-        cleanName = cleanName.substring(0, 50).trim();
-      }
-      if (cleanName.isEmpty) cleanName = "Video_${task.id}";
-
-      task.savePath = "${folder.path}/$cleanName.mp4";
-      await _executeDownload(task);
-    } catch (e) {
-      _handleTaskError(task, e);
+    if (result['formats'] == null) {
+      throw "No quality formats found";
     }
+
+    List formats = List<Map<String, dynamic>>.from(result['formats']);
+
+    // Quality dialog দেখাবে
+    _showQualityDialog(task, formats);
+
+  } catch (e) {
+    _handleTaskError(task, e);
   }
+}
+
+void _showQualityDialog(DownloadTask task, List formats) {
+  showModalBottomSheet(
+    context: context,
+    builder: (_) {
+      return ListView.builder(
+        itemCount: formats.length,
+        itemBuilder: (context, index) {
+          final f = formats[index];
+
+          double sizeMB = (f["filesize"] != null && f["filesize"] > 0)
+    ? (f["filesize"] / (1024 * 1024))
+    : 0;
+
+          return ListTile(
+            title: Text("${f["height"] ?? f["quality"] ?? "Unknown"}p"),
+            subtitle: Text("${sizeMB.toStringAsFixed(2)} MB"),
+            onTap: () {
+              Navigator.pop(context);
+
+              task.downloadUrl = f["url"];
+              task.videoTitle = task.videoTitle ?? "Video";
+
+              _executeDownload(task);
+            },
+          );
+        },
+      );
+    },
+  );
+}
 
   Future<Map<String, dynamic>> _resolveLink(String input) async {
     if (_ytService.isYouTubeLink(input)) return await _ytService.getVideoDetails(input);
@@ -467,7 +490,7 @@ Widget build(BuildContext context) {
                     elevation: 0,
                     shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
                   ),
-                  onPressed: _fetchAndShowQualities, 
+                  onPressed: _addNewDownload,
                   child: const Text(
                     "DOWNLOAD NOW", 
                     style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)
@@ -601,73 +624,4 @@ Widget build(BuildContext context) {
       ),
     );
   }
-
-  void _fetchAndShowQualities() async {
-  final input = _urlController.text.trim();
-  if (input.isEmpty) {
-    _showToast("Please paste a link first", isError: true);
-    return;
-  }
-
-  _showToast("Fetching video details...");
-
-  try {
-    // সার্ভার থেকে ভিডিওর তথ্য আনা
-    final response = await http.get(Uri.parse("$baseUrl/get_video_info?url=${Uri.encodeComponent(input)}"));
-    
-    if (response.statusCode == 200) {
-      final data = jsonDecode(response.body);
-      
-      // নিচ থেকে মেনু আসা (Bottom Sheet)
-      showModalBottomSheet(
-        context: context,
-        builder: (context) {
-          return Container(
-            padding: const EdgeInsets.all(16),
-            child: ListView.builder(
-              shrinkWrap: true,
-              itemCount: data['formats'].length,
-              itemBuilder: (context, index) {
-                var fmt = data['formats'][index];
-                return ListTile(
-                  title: Text("${fmt['resolution']} (${fmt['ext']})"),
-                  subtitle: Text("${fmt['size_mb']} MB"),
-                  leading: const Icon(Icons.download_for_offline),
-                  onTap: () {
-                    Navigator.pop(context); 
-                    _startManualDownload(input, fmt['url'], data['title']);
-                  },
-                );
-              },
-            ),
-          );
-        },
-      );
-    } else {
-      _showToast("Failed to fetch info", isError: true);
-    }
-  } catch (e) {
-    _showToast("Error: $e", isError: true);
-  }
-}
-
-void _startManualDownload(String inputUrl, String downloadUrl, String title) async {
-  if (!await _handlePermissions()) return;
-
-  final task = DownloadTask(
-    id: DateTime.now().millisecondsSinceEpoch.toString(),
-    inputUrl: inputUrl,
-    videoTitle: title,
-    downloadUrl: downloadUrl, // সার্ভার থেকে পাওয়া লিঙ্ক
-  );
-
-  setState(() {
-    _downloadTasks.insert(0, task);
-    _urlController.clear();
-  });
-
-  _executeDownload(task); // ডাউনলোড শুরু করা
-}
-
-
 }
