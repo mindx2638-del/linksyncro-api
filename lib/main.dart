@@ -173,40 +173,32 @@ class _HomeScreenState extends State<HomeScreen> {
   Future<void> _startDownloadProcess(DownloadTask task) async {
   try {
     setState(() => task.statusText = "Resolving link...");
-    
+
     // ১. লিংক রিজল্ভ করা
     final result = await _resolveLink(task.inputUrl);
 
-    // ডিবাগ করার জন্য প্রিন্ট করুন, দেখুন কনসোলে ঠিক কী আসছে
-    print("API Response Debug: $result");
+    // ২. কোয়ালিটি লিস্ট তৈরি করা (যদি ফরম্যাট না থাকে তবে সরাসরি URL-কে একটি অপশন হিসেবে ধরা)
+    List<Map<String, dynamic>> qualities = [];
 
-    // ২. শক্তিশালী চেক (Formats আছে কি না এবং খালি কি না)
-    bool hasFormats = result.containsKey('formats') && 
-                      result['formats'] != null && 
-                      (result['formats'] as List).isNotEmpty;
-
-    if (hasFormats) {
-      setState(() {
-        task.availableQualities = List<Map<String, dynamic>>.from(result['formats']);
-        task.videoTitle = result['title'] ?? "Video_${task.id}";
-        task.thumbnailUrl = result['thumbnail'];
-      });
-      
-      // সিলেকশন পপআপ দেখান
-      _showQualitySelectionSheet(task); 
-      return; 
+    if (result.containsKey('formats') && result['formats'] != null && (result['formats'] as List).isNotEmpty) {
+      // যদি এপিআই ফরম্যাট দেয়
+      qualities = List<Map<String, dynamic>>.from(result['formats']);
+    } else if (result.containsKey('url') && result['url'] != null) {
+      // যদি ফরম্যাট না দেয় কিন্তু সরাসরি লিঙ্ক দেয় (ফেসবুকের জন্য এটিই কাজ করবে)
+      qualities = [{'label': 'Best Quality (Direct)', 'url': result['url']}];
     }
 
-    // ৩. যদি ফরম্যাট না থাকে, তবে সরাসরি URL চেক করা
-    if (result.containsKey('url') && result['url'] != null) {
+    // ৩. যদি কোনো অপশন পাওয়া যায়, তবেই পপআপ দেখান
+    if (qualities.isNotEmpty) {
       setState(() {
-        task.downloadUrl = result['url'];
+        task.availableQualities = qualities;
         task.videoTitle = result['title'] ?? "Video_${task.id}";
         task.thumbnailUrl = result['thumbnail'];
       });
-      
-      // সরাসরি ডাউনলোড চালিয়ে যান
-      await _proceedToDownload(task);
+
+      // সিলেকশন পপআপ দেখান
+      _showQualitySelectionSheet(task);
+      return;
     } else {
       // যদি ফরম্যাটও নেই, URL-ও নেই
       throw "Invalid response: No formats or URL found.";
@@ -216,6 +208,7 @@ class _HomeScreenState extends State<HomeScreen> {
     _handleTaskError(task, e);
   }
 }
+
 
 
   Future<Map<String, dynamic>> _resolveLink(String input) async {
