@@ -102,134 +102,86 @@ def get_cookie_files(domain):
 def extract_media(url: str):
     cache_key = hashlib.md5(url.encode()).hexdigest()
 
-    # ✅ CACHE CHECK
     if cache_key in cache:
         data, ts = cache[cache_key]
         if time.time() - ts < CACHE_TTL:
-            logging.info(f"Cache Hit: {url}")
             return data
 
     domain = urlparse(url).hostname or ""
     cookie_list = [None] + get_cookie_files(domain)
 
+    output_path = os.path.join(TEMP_DIR, f"{cache_key}.mp4")
+
     for cookie_path in cookie_list:
         try:
-            output_path = f"{TEMP_DIR}/{cache_key}.mp4"
-
-            # already downloaded হলে reuse
-            if os.path.exists(output_path):
-                return {
-                    "status": "success",
-                    "file": output_path,
-                    "source": domain
-                }
-
             ydl_opts = {
-                # 🔥 HD + AUDIO FIX
-                "format": "bestvideo+bestaudio/best",
-                "outtmpl": output_path,
+                # 🔥 BEST HD FIX
+                "format": "bv*+ba/best",
                 "merge_output_format": "mp4",
+
+                "outtmpl": output_path,
 
                 "quiet": True,
                 "no_warnings": True,
                 "noplaylist": True,
-                "socket_timeout": 45,
-                "retries": 10,
+
+                "socket_timeout": 60,
+                "retries": 15,
+
                 "nocheckcertificate": True,
                 "geo_bypass": True,
 
                 "user_agent": random.choice(USER_AGENTS),
 
-                "http_headers": {
-                    "Referer": "https://www.google.com/"
-                }
+                "postprocessors": [
+                    {
+                        "key": "FFmpegVideoConvertor",
+                        "preferedformat": "mp4"
+                    }
+                ]
             }
 
             if cookie_path:
                 ydl_opts["cookiefile"] = cookie_path
-                logging.info(f"Using cookie: {cookie_path}")
 
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 info = ydl.extract_info(url, download=True)
 
-                result = {
-                    "status": "success",
-                    "file": output_path,
-                    "title": info.get("title"),
-                    "thumbnail": info.get("thumbnail"),
-                    "duration": info.get("duration"),
-                    "source": info.get("extractor_key", domain)
-                }
+            result = {
+                "status": "success",
+                "file": output_path,
+                "title": info.get("title"),
+                "thumbnail": info.get("thumbnail"),
+                "duration": info.get("duration"),
+                "source": info.get("extractor_key", domain)
+            }
 
-                # cache store
-                cache[cache_key] = (result, time.time())
-                if len(cache) > 2000:
-                    cache.pop(next(iter(cache)))
+            cache[cache_key] = (result, time.time())
 
-                return result
+            return result
 
         except Exception as e:
-            logging.error(f"Failed attempt: {str(e)}")
+            logging.error(f"Failed: {str(e)}")
             continue
 
     return None
 
 
 # -----------------------------
-# ROUTES
-# -----------------------------
-@app.get("/get_media")
-async def get_media(url: str, request: Request):
-
-    # API KEY CHECK
-    key = request.headers.get("x-api-key")
-    if not key or key not in VALID_API_KEYS:
-        raise HTTPException(status_code=401, detail="Invalid API Key")
-
-    # RATE LIMIT
-    now = time.time()
-    user_rates = rate_store.get(key, [])
-    user_rates = [t for t in user_rates if now - t < RATE_WINDOW]
-
-    if len(user_rates) >= RATE_LIMIT:
-        raise HTTPException(status_code=429, detail="Rate limit exceeded")
-
-    user_rates.append(now)
-    rate_store[key] = user_rates
-
-    # URL VALIDATION
-    if not url:
-        raise HTTPException(status_code=400, detail="URL required")
-
-    if "?" in url and ("facebook" in url or "instagram" in url):
-        url = url.split("?")[0]
-
-    if not is_valid_url(url):
-        raise HTTPException(status_code=400, detail="Invalid URL")
-
-    # EXECUTE
-    loop = asyncio.get_event_loop()
-    result = await loop.run_in_executor(executor, extract_media, url)
-
-    if not result:
-        raise HTTPException(status_code=404, detail="Extraction failed")
-
-    return result
-
-
-# -----------------------------
 # FILE SERVE
 # -----------------------------
 @app.get("/file")
-def serve_file(path: str):
+def serve_file(filename: str):
 
-    if not os.path.exists(path):
+    safe_path = os.path.join(TEMP_DIR, os.path.basename(filename))
+
+    if not os.path.exists(safe_path):
         raise HTTPException(status_code=404, detail="File not found")
 
     return FileResponse(
-        path,
+        safe_path,
         media_type="video/mp4",
-        filename=os.path.basename(path)
+        filename="video.mp4"
     )
 
 
