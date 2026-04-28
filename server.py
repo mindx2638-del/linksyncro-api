@@ -104,21 +104,24 @@ def extract_media(url: str):
 
     for cookie_path in cookie_list:
         ydl_opts = {
-            "format": "best[height<=1080]/best", 
-            "quiet": True,
-            "no_warnings": True,
-            "noplaylist": True,
-            "socket_timeout": 60,
-            "retries": 10,
-            "nocheckcertificate": True,
-            "geo_bypass": True,
-            "user_agent": random.choice(USER_AGENTS),
-            "extractor_args": {
-                "youtube": {"player_client": ["android", "ios", "mweb", "tv"], "player_skip": ["webpage", "configs"]},
-                "instagram": {"force_subtitles": False},
-                "facebook": {"force_generic_extractor": False}
-            }
-        }
+    # 'bestvideo+bestaudio' অডিও এবং ভিডিও আলাদা থাকলে সেগুলো ডাউনলোড করে মার্জ করবে
+    # '[height<=1080]' সর্বোচ্চ ১০৮০পি রেজোলিউশন নিশ্চিত করবে
+    "format": "bestvideo[height<=1080]+bestaudio/best[height<=1080]/best",
+    "merge_output_format": "mp4", # এটি নিশ্চিত করবে আউটপুট ফাইলটি সব সময় MP4 হবে
+    "quiet": True,
+    "no_warnings": True,
+    "noplaylist": True,
+    "socket_timeout": 60,
+    "retries": 10,
+    "nocheckcertificate": True,
+    "geo_bypass": True,
+    "user_agent": random.choice(USER_AGENTS),
+    "extractor_args": {
+        "youtube": {"player_client": ["android", "ios", "mweb", "tv"], "player_skip": ["webpage", "configs"]},
+        "instagram": {"force_subtitles": False},
+        "facebook": {"force_generic_extractor": False}
+    }
+}
 
 
         if cookie_path:
