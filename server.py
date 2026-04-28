@@ -9,23 +9,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from urllib.parse import urlparse
 from concurrent.futures import ThreadPoolExecutor
-
-import json
-import redis.asyncio as redis
-from contextlib import asynccontextmanager
-
-# Redis কানেকশন সেটআপ
-redis_client = None
-
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    global redis_client
-    redis_client = redis.Redis(host='localhost', port=6379, db=0, decode_responses=True)
-    yield
-    await redis_client.close()
-
-# এখন app ইনিশিয়ালাইজ করার সময় lifespan যোগ করুন:
-app = FastAPI(title="LinkSyncro Universal API", version="3.0", lifespan=lifespan)
+from redis_utils import get_cache, set_cache, check_rate_limit
 
 # -----------------------------
 # APP INITIALIZATION
@@ -104,15 +88,22 @@ def get_cookie_files(domain):
 # CORE ENGINE
 # -----------------------------
 def extract_media(url: str):
-    domain = urlparse(url).hostname or ""
+    # Redis Cache Key তৈরি
+    cache_key = hashlib.md5(url.encode()).hexdigest()
     
-    # কুকি লিস্ট তৈরি
+    # Redis থেকে ডেটা চেক করা
+    cached_data = get_cache(cache_key)
+    if cached_data:
+        logging.info(f"Cache Hit: {url}")
+        return cached_data
+
+    domain = urlparse(url).hostname or ""
     cookie_list = [None]
     cookie_list.extend(get_cookie_files(domain))
 
     for cookie_path in cookie_list:
         ydl_opts = {
-            "format": "best[height<=1440]/best", 
+            "format": "best[height<=720]/best",
             "quiet": True,
             "no_warnings": True,
             "noplaylist": True,
@@ -137,22 +128,19 @@ def extract_media(url: str):
         try:
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 info = ydl.extract_info(url, download=False)
-                
                 download_url = info.get("url")
-                
+
                 # ফরম্যাট সিলেকশন লজিক
                 if not download_url and "formats" in info:
                     valid_formats = [f for f in info["formats"] if f.get("vcodec") != "none" and f.get("acodec") != "none"]
                     if not valid_formats:
                         valid_formats = [f for f in info["formats"] if f.get("url")]
-                    
                     if valid_formats:
                         valid_formats.sort(key=lambda x: (x.get("height") or 0), reverse=True)
                         download_url = valid_formats[0]["url"]
 
                 if download_url:
-                    # রেজাল্ট তৈরি করা হচ্ছে (এটাই আপনার রাউটে রিটার্ন হিসেবে যাবে)
-                    return {
+                    result = {
                         "status": "success",
                         "url": download_url,
                         "title": info.get("title", "Video"),
@@ -161,14 +149,19 @@ def extract_media(url: str):
                         "source": info.get("extractor_key", domain)
                     }
                     
+                    # Redis এ রেজাল্ট সেভ করা
+                    set_cache(cache_key, result)
+                    return result
+
         except Exception as e:
             if not cookie_path:
                 logging.warning(f"Failed without cookies. Error: {str(e)}")
             else:
                 logging.error(f"Failed with cookie {cookie_path}: {str(e)}")
-            continue 
-
+            continue
+            
     return None
+
 # -----------------------------
 # ROUTES
 # -----------------------------
@@ -177,35 +170,38 @@ async def get_media(url: str, request: Request):
     # API Key চেক
     key = request.headers.get("x-api-key")
     if not key or key not in VALID_API_KEYS:
-        raise HTTPException(status_code=401, detail="Unauthorized")
+        raise HTTPException(status_code=401, detail="Unauthorized: Invalid API Key")
 
-    # Redis Rate Limiting
-    rate_key = f"rate:{key}"
-    count = await redis_client.incr(rate_key)
-    if count == 1: await redis_client.expire(rate_key, RATE_WINDOW)
-    if count > RATE_LIMIT:
+    # Redis ব্যবহার করে Rate Limit চেক
+    if not check_rate_limit(key, RATE_LIMIT, RATE_WINDOW):
         raise HTTPException(status_code=429, detail="Rate limit exceeded")
 
-    if not url: raise HTTPException(status_code=400, detail="URL is required")
-    if "?" in url and any(x in url for x in ["facebook", "fb", "instagram"]): url = url.split("?")[0]
-    if not is_valid_url(url): raise HTTPException(status_code=400, detail="Invalid URL")
+    # URL চেক
+    if not url:
+        raise HTTPException(status_code=400, detail="URL is required")
 
-    # Redis Cache Check
-    cache_key = f"cache:{hashlib.md5(url.encode()).hexdigest()}"
-    cached_data = await redis_client.get(cache_key)
-    if cached_data:
-        return json.loads(cached_data)
+    # URL ক্লিনিং লজিক
+    if "?" in url and ("facebook" in url or "fb" in url or "instagram" in url):
+        url = url.split("?")[0]
 
-    # Extraction
-    loop = asyncio.get_event_loop()
-    result = await loop.run_in_executor(executor, extract_media, url)
-    
-    if not result:
-        raise HTTPException(status_code=404, detail="Could not extract video.")
+    if not is_valid_url(url):
+        raise HTTPException(status_code=400, detail="Unsupported or invalid URL")
 
-    # Redis-এ সেভ করা
-    await redis_client.set(cache_key, json.dumps(result), ex=CACHE_TTL)
-    return result
+    # ভিডিও এক্সট্রাকশন লজিক
+    try:
+        loop = asyncio.get_event_loop()
+        result = await loop.run_in_executor(executor, extract_media, url)
+        
+        if not result:
+            raise HTTPException(status_code=404, detail="Could not extract video. Content may be private or IP blocked.")
+        
+        return result
+
+    except HTTPException as he:
+        raise he
+    except Exception as e:
+        logging.error(f"Critical Error: {str(e)}")
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 # -----------------------------
 # RUNNER
