@@ -6,3 +6,4 @@ httpcore
 httpx
 requests
 python-multipart
+redis
