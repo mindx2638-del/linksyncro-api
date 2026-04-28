@@ -150,7 +150,7 @@ def extract_media(url: str):
                     }
                     
                     # Redis এ রেজাল্ট সেভ করা
-                    set_cache(cache_key, result, ttl=1800)
+                    set_cache(cache_key, result, ttl=3600)
                     return result
 
         except Exception as e:
