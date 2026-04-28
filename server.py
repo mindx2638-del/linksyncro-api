@@ -10,6 +10,23 @@ from fastapi.middleware.cors import CORSMiddleware
 from urllib.parse import urlparse
 from concurrent.futures import ThreadPoolExecutor
 
+import json
+import redis.asyncio as redis
+from contextlib import asynccontextmanager
+
+# Redis কানেকশন সেটআপ
+redis_client = None
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    global redis_client
+    redis_client = redis.Redis(host='localhost', port=6379, db=0, decode_responses=True)
+    yield
+    await redis_client.close()
+
+# এখন app ইনিশিয়ালাইজ করার সময় lifespan যোগ করুন:
+app = FastAPI(title="LinkSyncro Universal API", version="3.0", lifespan=lifespan)
+
 # -----------------------------
 # APP INITIALIZATION
 # -----------------------------
@@ -28,9 +45,7 @@ executor = ThreadPoolExecutor(max_workers=50) # থ্রেড পুল কি
 # -----------------------------
 # CACHE & SETTINGS
 # -----------------------------
-cache = {}
 CACHE_TTL = 1200 
-rate_store = {}
 RATE_LIMIT = 50
 RATE_WINDOW = 60
 VALID_API_KEYS = {"demo_key_123", "premium_key_456"}
@@ -89,17 +104,10 @@ def get_cookie_files(domain):
 # CORE ENGINE
 # -----------------------------
 def extract_media(url: str):
-    # আপনার অরিজিনাল ক্যাশ চেক লজিক
-    cache_key = hashlib.md5(url.encode()).hexdigest()
-    if cache_key in cache:
-        data, ts = cache[cache_key]
-        if time.time() - ts < CACHE_TTL:
-            logging.info(f"Cache Hit: {url}")
-            return data
-
     domain = urlparse(url).hostname or ""
     
-    cookie_list = [None] 
+    # কুকি লিস্ট তৈরি
+    cookie_list = [None]
     cookie_list.extend(get_cookie_files(domain))
 
     for cookie_path in cookie_list:
@@ -120,7 +128,6 @@ def extract_media(url: str):
             }
         }
 
-
         if cookie_path:
             ydl_opts["cookiefile"] = cookie_path
             logging.info(f"Attempting with Cookie: {cookie_path}")
@@ -133,7 +140,7 @@ def extract_media(url: str):
                 
                 download_url = info.get("url")
                 
-                # আপনার অরিজিনাল ফরম্যাট সিলেকশন লজিক (পুরোটা একই রাখা হয়েছে)
+                # ফরম্যাট সিলেকশন লজিক
                 if not download_url and "formats" in info:
                     valid_formats = [f for f in info["formats"] if f.get("vcodec") != "none" and f.get("acodec") != "none"]
                     if not valid_formats:
@@ -144,7 +151,8 @@ def extract_media(url: str):
                         download_url = valid_formats[0]["url"]
 
                 if download_url:
-                    result = {
+                    # রেজাল্ট তৈরি করা হচ্ছে (এটাই আপনার রাউটে রিটার্ন হিসেবে যাবে)
+                    return {
                         "status": "success",
                         "url": download_url,
                         "title": info.get("title", "Video"),
@@ -152,12 +160,6 @@ def extract_media(url: str):
                         "duration": info.get("duration"),
                         "source": info.get("extractor_key", domain)
                     }
-                    
-                    cache[cache_key] = (result, time.time())
-                    if len(cache) > 2000: # ক্যাশ লিমিট কিছুটা বাড়ানো হয়েছে
-                        cache.pop(next(iter(cache)))
-                    
-                    return result
                     
         except Exception as e:
             if not cookie_path:
@@ -167,47 +169,43 @@ def extract_media(url: str):
             continue 
 
     return None
-
 # -----------------------------
 # ROUTES
 # -----------------------------
 @app.get("/get_media")
 async def get_media(url: str, request: Request):
-    # আপনার অরিজিনাল API Key চেক লজিক
+    # API Key চেক
     key = request.headers.get("x-api-key")
     if not key or key not in VALID_API_KEYS:
-        raise HTTPException(status_code=401, detail="Unauthorized: Invalid API Key")
+        raise HTTPException(status_code=401, detail="Unauthorized")
 
-    # আপনার অরিজিনাল Rate Limit লজিক
-    now = time.time()
-    user_rates = rate_store.get(key, [])
-    user_rates = [t for t in user_rates if now - t < RATE_WINDOW]
-    rate_store[key] = user_rates
-    if len(user_rates) >= RATE_LIMIT:
+    # Redis Rate Limiting
+    rate_key = f"rate:{key}"
+    count = await redis_client.incr(rate_key)
+    if count == 1: await redis_client.expire(rate_key, RATE_WINDOW)
+    if count > RATE_LIMIT:
         raise HTTPException(status_code=429, detail="Rate limit exceeded")
-    rate_store[key].append(now)
 
-    if not url:
-        raise HTTPException(status_code=400, detail="URL is required")
+    if not url: raise HTTPException(status_code=400, detail="URL is required")
+    if "?" in url and any(x in url for x in ["facebook", "fb", "instagram"]): url = url.split("?")[0]
+    if not is_valid_url(url): raise HTTPException(status_code=400, detail="Invalid URL")
 
-    # আপনার অরিজিনাল URL ক্লিনিং লজিক
-    if "?" in url and ("facebook" in url or "fb" in url or "instagram" in url):
-        url = url.split("?")[0]
+    # Redis Cache Check
+    cache_key = f"cache:{hashlib.md5(url.encode()).hexdigest()}"
+    cached_data = await redis_client.get(cache_key)
+    if cached_data:
+        return json.loads(cached_data)
 
-    if not is_valid_url(url):
-        raise HTTPException(status_code=400, detail="Unsupported or invalid URL")
+    # Extraction
+    loop = asyncio.get_event_loop()
+    result = await loop.run_in_executor(executor, extract_media, url)
+    
+    if not result:
+        raise HTTPException(status_code=404, detail="Could not extract video.")
 
-    try:
-        loop = asyncio.get_event_loop()
-        result = await loop.run_in_executor(executor, extract_media, url)
-        if not result:
-            raise HTTPException(status_code=404, detail="Could not extract video. Content may be private or IP blocked.")
-        return result
-    except HTTPException as he:
-        raise he
-    except Exception as e:
-        logging.error(f"Critical Error: {str(e)}")
-        raise HTTPException(status_code=500, detail="Internal server error")
+    # Redis-এ সেভ করা
+    await redis_client.set(cache_key, json.dumps(result), ex=CACHE_TTL)
+    return result
 
 # -----------------------------
 # RUNNER
