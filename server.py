@@ -89,7 +89,7 @@ def get_cookie_files(domain):
 # CORE ENGINE
 # -----------------------------
 def extract_media(url: str):
-    # আপনার অরিজিনাল ক্যাশ চেক লজিক
+    # ক্যাশ চেক লজিক
     cache_key = hashlib.md5(url.encode()).hexdigest()
     if cache_key in cache:
         data, ts = cache[cache_key]
@@ -98,31 +98,28 @@ def extract_media(url: str):
             return data
 
     domain = urlparse(url).hostname or ""
-    
-    cookie_list = [None] 
+    cookie_list = [None]
     cookie_list.extend(get_cookie_files(domain))
 
     for cookie_path in cookie_list:
+        # অপ্টিমাইজড YDL অপশন
         ydl_opts = {
-    # 'bestvideo+bestaudio' অডিও এবং ভিডিও আলাদা থাকলে সেগুলো ডাউনলোড করে মার্জ করবে
-    # '[height<=1080]' সর্বোচ্চ ১০৮০পি রেজোলিউশন নিশ্চিত করবে
-    "format": "bestvideo[height<=1080]+bestaudio/best[height<=1080]/best",
-    "merge_output_format": "mp4", # এটি নিশ্চিত করবে আউটপুট ফাইলটি সব সময় MP4 হবে
-    "quiet": True,
-    "no_warnings": True,
-    "noplaylist": True,
-    "socket_timeout": 60,
-    "retries": 10,
-    "nocheckcertificate": True,
-    "geo_bypass": True,
-    "user_agent": random.choice(USER_AGENTS),
-    "extractor_args": {
-        "youtube": {"player_client": ["android", "ios", "mweb", "tv"], "player_skip": ["webpage", "configs"]},
-        "instagram": {"force_subtitles": False},
-        "facebook": {"force_generic_extractor": False}
-    }
-}
-
+            # এটি আগে অডিও-ভিডিও যুক্ত ফাইল খুঁজবে, না পেলে অন্য ফরম্যাট
+            "format": "best[height<=1080][ext=mp4]/best[ext=mp4]/best",
+            "quiet": True,
+            "no_warnings": True,
+            "noplaylist": True,
+            "socket_timeout": 60,
+            "retries": 10,
+            "nocheckcertificate": True,
+            "geo_bypass": True,
+            "user_agent": random.choice(USER_AGENTS),
+            "extractor_args": {
+                "youtube": {"player_client": ["android", "ios", "mweb", "tv"], "player_skip": ["webpage", "configs"]},
+                "instagram": {"force_subtitles": False},
+                "facebook": {"force_generic_extractor": False}
+            }
+        }
 
         if cookie_path:
             ydl_opts["cookiefile"] = cookie_path
@@ -133,18 +130,17 @@ def extract_media(url: str):
         try:
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 info = ydl.extract_info(url, download=False)
-                
                 download_url = info.get("url")
-                
-                # আপনার অরিজিনাল ফরম্যাট সিলেকশন লজিক (পুরোটা একই রাখা হয়েছে)
+
+                # যদি সরাসরি URL না পাওয়া যায়, ফরম্যাট লিস্ট থেকে সেরাটি খোঁজা
                 if not download_url and "formats" in info:
+                    # এমন ফরম্যাট ফিল্টার করা যেখানে অডিও এবং ভিডিও দুটিই আছে
                     valid_formats = [f for f in info["formats"] if f.get("vcodec") != "none" and f.get("acodec") != "none"]
-                    if not valid_formats:
-                        valid_formats = [f for f in info["formats"] if f.get("url")]
                     
                     if valid_formats:
+                        # হাইট অনুযায়ী সাজিয়ে সেরাটি নেওয়া
                         valid_formats.sort(key=lambda x: (x.get("height") or 0), reverse=True)
-                        download_url = valid_formats[0]["url"]
+                        download_url = valid_formats[0].get("url")
 
                 if download_url:
                     result = {
@@ -155,19 +151,18 @@ def extract_media(url: str):
                         "duration": info.get("duration"),
                         "source": info.get("extractor_key", domain)
                     }
-                    
+                    # ক্যাশে সেভ করা
                     cache[cache_key] = (result, time.time())
-                    if len(cache) > 2000: # ক্যাশ লিমিট কিছুটা বাড়ানো হয়েছে
+                    if len(cache) > 2000:
                         cache.pop(next(iter(cache)))
-                    
                     return result
-                    
+        
         except Exception as e:
             if not cookie_path:
                 logging.warning(f"Failed without cookies. Error: {str(e)}")
             else:
                 logging.error(f"Failed with cookie {cookie_path}: {str(e)}")
-            continue 
+            continue # অন্য কুকি থাকলে ট্রাই করবে
 
     return None
 
