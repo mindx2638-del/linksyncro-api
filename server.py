@@ -89,7 +89,7 @@ def get_cookie_files(domain):
 # CORE ENGINE
 # -----------------------------
 def extract_media(url: str):
-    # আপনার অরিজিনাল ক্যাশ চেক লজিক (অপরিবর্তিত)
+    # ক্যাশ চেক লজিক
     cache_key = hashlib.md5(url.encode()).hexdigest()
     if cache_key in cache:
         data, ts = cache[cache_key]
@@ -132,7 +132,7 @@ def extract_media(url: str):
                 info = ydl.extract_info(url, download=False)
                 download_url = info.get("url")
 
-                # আপনার অরিজিনাল ফরম্যাট সিলেকশন লজিক (অপরিবর্তিত)
+                # অরিজিনাল ফরম্যাট সিলেকশন লজিক
                 if not download_url and "formats" in info:
                     valid_formats = [f for f in info["formats"] if f.get("vcodec") != "none" and f.get("acodec") != "none"]
                     if not valid_formats:
@@ -142,7 +142,6 @@ def extract_media(url: str):
                         download_url = valid_formats[0]["url"]
 
                 if download_url:
-                    # নতুন লজিক: কোয়ালিটি সিলেকশনের জন্য লিস্ট তৈরি
                     formats_list = []
                     if "formats" in info:
                         for f in info["formats"]:
@@ -154,10 +153,20 @@ def extract_media(url: str):
                                         "label": f"{height}p",
                                         "url": f.get("url")
                                     })
-                        # রেজল্যুশন অনুযায়ী সাজানো
-                        formats_list.sort(key=lambda x: int(x['label'].replace('p', '')), reverse=True)
+                    
+                    # FIX: যদি ফরম্যাট না পাওয়া যায়, তবে অরিজিনাল কোয়ালিটি যোগ করুন
+                    if not formats_list:
+                        # রেজোলিউশন ডাটা থাকলে তা ব্যবহার করুন, না থাকলে ডিফল্ট অরিজিনাল
+                        res = info.get('resolution') or (f"{info.get('height')}p" if info.get('height') else "Best")
+                        formats_list.append({
+                            "label": f"Original ({res})",
+                            "url": download_url
+                        })
+                    else:
+                        # রেজল্যুশন অনুযায়ী সাজানো (সর্টিং লজিকটি এখানে আপডেট করা হয়েছে যেন Original লেবেল ক্র্যাশ না করে)
+                        formats_list.sort(key=lambda x: int(str(x['label']).replace('p', '').replace('Original (', '').replace(')', '')) if any(char.isdigit() for char in str(x['label'])) else 0, reverse=True)
 
-                    # আপনার অরিজিনাল রেজাল্ট ডিকশনারি + নতুন ফরম্যাট লিস্ট
+                    # রেজাল্ট ডিকশনারি
                     result = {
                         "status": "success",
                         "url": download_url,
@@ -165,7 +174,7 @@ def extract_media(url: str):
                         "thumbnail": info.get("thumbnail"),
                         "duration": info.get("duration"),
                         "source": info.get("extractor_key", domain),
-                        "formats": formats_list  # আপনার কোয়ালিটি সিলেক্ট করার ডাটা
+                        "formats": formats_list
                     }
                     
                     cache[cache_key] = (result, time.time())
