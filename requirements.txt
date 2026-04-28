@@ -1,7 +1,7 @@
 fastapi
 uvicorn
 gunicorn
-yt-dlp>=2025.01.15
+yt-dlp
 httpcore
 httpx
 requests
