@@ -102,12 +102,20 @@ def extract_media(url: str):
     cookie_list.extend(get_cookie_files(domain))
 
     for cookie_path in cookie_list:
+        # FFmpeg এবং হাই কোয়ালিটি অপশনস
         ydl_opts = {
-            "format": "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best",
+            "format": "bestvideo+bestaudio/best", # সেরা ভিডিও এবং অডিও কম্বো
+            "merge_output_format": "mp4",
+            "postprocessors": [
+                {
+                    "key": "FFmpegVideoConvertor",
+                    "preferedformat": "mp4",
+                }
+            ],
             "quiet": True,
             "no_warnings": True,
             "noplaylist": True,
-            "socket_timeout": 45,
+            "socket_timeout": 60,
             "retries": 10,
             "nocheckcertificate": True,
             "geo_bypass": True,
@@ -118,34 +126,31 @@ def extract_media(url: str):
                 "Referer": "https://www.google.com/",
             },
             "extractor_args": {
-                "youtube": {"player_client": ["android", "ios", "mweb", "tv"], "player_skip": ["webpage", "configs"]},
+                "youtube": {"player_client": ["android", "ios", "mweb", "tv"]},
                 "instagram": {"force_subtitles": False},
                 "facebook": {"force_generic_extractor": False}
             }
         }
         if cookie_path: ydl_opts["cookiefile"] = cookie_path
         
-        logging.info(f"Attempting with Cookie: {cookie_path}" if cookie_path else f"Attempting WITHOUT cookies for: {url}")
-
         try:
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                # download=False মানে ফাইল সার্ভারে ডাউনলোড হবে না, জাস্ট লিঙ্ক দিবে
                 info = ydl.extract_info(url, download=False)
+                
+                # যদি স্ট্রিম লিঙ্ক পাওয়া যায়
                 download_url = info.get("url")
-
-                # অরিজিনাল ফরম্যাট সিলেকশন লজিক
                 if not download_url and "formats" in info:
-                    valid_formats = [f for f in info["formats"] if f.get("vcodec") != "none" and f.get("acodec") != "none"]
-                    if not valid_formats:
-                        valid_formats = [f for f in info["formats"] if f.get("url")]
-                    if valid_formats:
-                        valid_formats.sort(key=lambda x: (x.get("height") or 0), reverse=True)
-                        download_url = valid_formats[0]["url"]
+                    # বেস্ট স্ট্রিম লিঙ্ক খোঁজা
+                    best_format = next((f for f in info["formats"] if f.get("vcodec") != "none" and f.get("acodec") != "none"), None)
+                    if best_format:
+                        download_url = best_format.get("url")
 
                 if download_url:
                     formats_list = []
                     if "formats" in info:
+                        # ফরম্যাট লিস্ট তৈরি
                         for f in info["formats"]:
-                            # নিশ্চিত করছি ভিডিও+অডিও ফাইলই আসছে
                             if f.get("vcodec") != "none" and f.get("acodec") != "none":
                                 height = f.get("height")
                                 if height:
@@ -154,19 +159,16 @@ def extract_media(url: str):
                                         "url": f.get("url")
                                     })
                     
-                    # FIX: যদি ফরম্যাট না পাওয়া যায়, তবে অরিজিনাল কোয়ালিটি যোগ করুন
+                    # যদি রেজাল্ট না থাকে, অরিজিনাল লিঙ্ক ব্যবহার
                     if not formats_list:
-                        # রেজোলিউশন ডাটা থাকলে তা ব্যবহার করুন, না থাকলে ডিফল্ট অরিজিনাল
-                        res = info.get('resolution') or (f"{info.get('height')}p" if info.get('height') else "Best")
                         formats_list.append({
-                            "label": f"Original ({res})",
+                            "label": "Best Quality",
                             "url": download_url
                         })
-                    else:
-                        # রেজল্যুশন অনুযায়ী সাজানো (সর্টিং লজিকটি এখানে আপডেট করা হয়েছে যেন Original লেবেল ক্র্যাশ না করে)
-                        formats_list.sort(key=lambda x: int(str(x['label']).replace('p', '').replace('Original (', '').replace(')', '')) if any(char.isdigit() for char in str(x['label'])) else 0, reverse=True)
+                    
+                    # সর্টিং
+                    formats_list.sort(key=lambda x: int(str(x['label']).replace('p', '').split(' ')[0]) if any(c.isdigit() for c in str(x['label'])) else 0, reverse=True)
 
-                    # রেজাল্ট ডিকশনারি
                     result = {
                         "status": "success",
                         "url": download_url,
@@ -178,15 +180,10 @@ def extract_media(url: str):
                     }
                     
                     cache[cache_key] = (result, time.time())
-                    if len(cache) > 2000:
-                        cache.pop(next(iter(cache)))
                     return result
                     
         except Exception as e:
-            if not cookie_path:
-                logging.warning(f"Failed without cookies. Error: {str(e)}")
-            else:
-                logging.error(f"Failed with cookie {cookie_path}: {str(e)}")
+            logging.error(f"Error for {url} with cookie {cookie_path}: {str(e)}")
             continue
             
     return None

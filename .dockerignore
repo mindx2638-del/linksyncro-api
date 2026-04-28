@@ -1,0 +1,15 @@
+.git
+.gitignore
+_pycache_
+*.pyc
+*.pyo
+*.pyd
+.env
+.venv
+venv
+env
+temp/*
+!temp/.keep
+README.md
+Dockerfile
+.dockerignore
