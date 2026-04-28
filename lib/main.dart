@@ -52,6 +52,7 @@ class DownloadTask {
   bool isPaused;
   bool isFinished;
   CancelToken cancelToken;
+  List<Map<String, dynamic>>? availableQualities;
 
   DownloadTask({
     required this.id,
@@ -65,6 +66,7 @@ class DownloadTask {
     this.isProcessing = true,
     this.isPaused = false,
     this.isFinished = false,
+     this.availableQualities,
   }) : cancelToken = CancelToken();
 }
 
@@ -169,33 +171,52 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<void> _startDownloadProcess(DownloadTask task) async {
-    try {
-      final result = await _resolveLink(task.inputUrl);
+  try {
+    setState(() => task.statusText = "Resolving link...");
+    
+    // ১. লিংক রিজল্ভ করা
+    final result = await _resolveLink(task.inputUrl);
+
+    // ডিবাগ করার জন্য প্রিন্ট করুন, দেখুন কনসোলে ঠিক কী আসছে
+    print("API Response Debug: $result");
+
+    // ২. শক্তিশালী চেক (Formats আছে কি না এবং খালি কি না)
+    bool hasFormats = result.containsKey('formats') && 
+                      result['formats'] != null && 
+                      (result['formats'] as List).isNotEmpty;
+
+    if (hasFormats) {
+      setState(() {
+        task.availableQualities = List<Map<String, dynamic>>.from(result['formats']);
+        task.videoTitle = result['title'] ?? "Video_${task.id}";
+        task.thumbnailUrl = result['thumbnail'];
+      });
+      
+      // সিলেকশন পপআপ দেখান
+      _showQualitySelectionSheet(task); 
+      return; 
+    }
+
+    // ৩. যদি ফরম্যাট না থাকে, তবে সরাসরি URL চেক করা
+    if (result.containsKey('url') && result['url'] != null) {
       setState(() {
         task.downloadUrl = result['url'];
         task.videoTitle = result['title'] ?? "Video_${task.id}";
         task.thumbnailUrl = result['thumbnail'];
       });
-
-      if (task.downloadUrl == null) throw "Invalid response from server";
-
-      const root = "/storage/emulated/0";
-      final folder = Directory("$root/Download/LinkSyncro");
-      if (!await folder.exists()) await folder.create(recursive: true);
-
-      // ফাইল নেম ক্লিনিং এবং লেন্থ লিমিট (Error 36 Fix)
-      String cleanName = task.videoTitle!.replaceAll(RegExp(r'[<>:"/\\|?*]'), '').trim();
-      if (cleanName.length > 50) {
-        cleanName = cleanName.substring(0, 50).trim();
-      }
-      if (cleanName.isEmpty) cleanName = "Video_${task.id}";
-
-      task.savePath = "${folder.path}/$cleanName.mp4";
-      await _executeDownload(task);
-    } catch (e) {
-      _handleTaskError(task, e);
+      
+      // সরাসরি ডাউনলোড চালিয়ে যান
+      await _proceedToDownload(task);
+    } else {
+      // যদি ফরম্যাটও নেই, URL-ও নেই
+      throw "Invalid response: No formats or URL found.";
     }
+
+  } catch (e) {
+    _handleTaskError(task, e);
   }
+}
+
 
   Future<Map<String, dynamic>> _resolveLink(String input) async {
     if (_ytService.isYouTubeLink(input)) return await _ytService.getVideoDetails(input);
@@ -599,4 +620,85 @@ Widget build(BuildContext context) {
       ),
     );
   }
+
+  void _showQualitySelectionSheet(DownloadTask task) {
+  showModalBottomSheet(
+    context: context,
+    isScrollControlled: true, // এটি দিলে বটম শিট বড় করতে সুবিধা হয়
+    shape: const RoundedRectangleBorder(
+      borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+    ),
+    builder: (context) => Container(
+      padding: const EdgeInsets.all(20),
+      constraints: BoxConstraints(maxHeight: MediaQuery.of(context).size.height * 0.7), // স্ক্রিনের ৭০% এর বেশি হবে না
+      child: Column(
+        mainAxisSize: MainAxisSize.min, // এটি দিলে ওভারফ্লো হবে না
+        children: [
+          const Text("Select Video Quality", 
+            style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+          const Divider(),
+          Flexible( // Expanded এর বদলে Flexible ব্যবহার করা ভালো
+            child: ListView.builder(
+              shrinkWrap: true,
+              itemCount: task.availableQualities!.length,
+              itemBuilder: (context, index) {
+                final format = task.availableQualities![index];
+                return ListTile(
+                  leading: const Icon(Icons.high_quality, color: Colors.indigo),
+                  title: Text(format['label'] ?? "Quality"),
+                  trailing: const Icon(Icons.arrow_forward_ios, size: 14),
+                  onTap: () {
+                    Navigator.pop(context);
+                    task.downloadUrl = format['url'];
+                    _prepareAndExecuteDownload(task);
+                  },
+                );
+              },
+            ),
+          ),
+          const SizedBox(height: 10),
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text("Cancel"),
+          ),
+        ],
+      ),
+    ),
+  );
+}
+
+Future<void> _prepareAndExecuteDownload(DownloadTask task) async {
+  if (task.downloadUrl == null) throw "Download URL is null";
+  
+  const root = "/storage/emulated/0";
+  final folder = Directory("$root/Download/LinkSyncro");
+  if (!await folder.exists()) await folder.create(recursive: true);
+
+  String cleanName = task.videoTitle!.replaceAll(RegExp(r'[<>:"/\\|?*]'), '').trim();
+  if (cleanName.length > 50) cleanName = cleanName.substring(0, 50).trim();
+  if (cleanName.isEmpty) cleanName = "Video_${task.id}";
+  
+  task.savePath = "${folder.path}/$cleanName.mp4";
+  
+  await _executeDownload(task); // আপনার আগের ডাউনলোড লজিক কল হবে
+}
+
+
+Future<void> _proceedToDownload(DownloadTask task) async {
+  // নিরাপত্তা চেক: ইউআরএল নাল বা খালি কিনা
+  if (task.downloadUrl == null || task.downloadUrl!.isEmpty) {
+    _handleTaskError(task, "Download URL missing");
+    return;
+  }
+  
+  // ইউজারকে জানানোর জন্য স্ট্যাটাস আপডেট করা
+  setState(() {
+    task.statusText = "Preparing...";
+    task.isProcessing = true;
+  });
+  
+  // আপনার আসল ডাউনলোড মেথড কল করা
+  await _prepareAndExecuteDownload(task);
+}
+
 }
