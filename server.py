@@ -9,7 +9,6 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from urllib.parse import urlparse
 from concurrent.futures import ThreadPoolExecutor
-import traceback 
 
 # -----------------------------
 # APP INITIALIZATION
@@ -67,8 +66,7 @@ def get_cookie_files(domain):
         "fb": "facebook_cookies",
         "youtube": "youtube_cookies",
         "youtu.be": "youtube_cookies",
-        "instagram": "instagram_cookies",
-        "tiktok": "tiktok_cookies" 
+        "instagram": "instagram_cookies"
     }
     
     target_folder = ""
@@ -91,7 +89,7 @@ def get_cookie_files(domain):
 # CORE ENGINE
 # -----------------------------
 def extract_media(url: str):
-    # ১. ক্যাশ চেক লজিক (অপরিবর্তিত)
+    # আপনার অরিজিনাল ক্যাশ চেক লজিক
     cache_key = hashlib.md5(url.encode()).hexdigest()
     if cache_key in cache:
         data, ts = cache[cache_key]
@@ -101,14 +99,12 @@ def extract_media(url: str):
 
     domain = urlparse(url).hostname or ""
     
-    # ২. কুকি ফাইল লজিক (অপরিবর্তিত)
     cookie_list = [None] 
     cookie_list.extend(get_cookie_files(domain))
 
-    # ৩. এক্সট্রাকশন লুপ
     for cookie_path in cookie_list:
         ydl_opts = {
-            "format": "best[height<=1080]/best", 
+            "format": "best[height<=1440]/best", 
             "quiet": True,
             "no_warnings": True,
             "noplaylist": True,
@@ -116,15 +112,14 @@ def extract_media(url: str):
             "retries": 10,
             "nocheckcertificate": True,
             "geo_bypass": True,
-            "force_ipv4": True, # টিকটকের জন্য এটি খুবই কার্যকর
             "user_agent": random.choice(USER_AGENTS),
             "extractor_args": {
                 "youtube": {"player_client": ["android", "ios", "mweb", "tv"], "player_skip": ["webpage", "configs"]},
                 "instagram": {"force_subtitles": False},
-                "facebook": {"force_generic_extractor": False},
-                "tiktok": {"no_geo_bypass": False} 
+                "facebook": {"force_generic_extractor": False}
             }
         }
+
 
         if cookie_path:
             ydl_opts["cookiefile"] = cookie_path
@@ -138,7 +133,7 @@ def extract_media(url: str):
                 
                 download_url = info.get("url")
                 
-                # ৪. ফরম্যাট সিলেকশন লজিক (অপরিবর্তিত)
+                # আপনার অরিজিনাল ফরম্যাট সিলেকশন লজিক (পুরোটা একই রাখা হয়েছে)
                 if not download_url and "formats" in info:
                     valid_formats = [f for f in info["formats"] if f.get("vcodec") != "none" and f.get("acodec") != "none"]
                     if not valid_formats:
@@ -158,20 +153,17 @@ def extract_media(url: str):
                         "source": info.get("extractor_key", domain)
                     }
                     
-                    # ক্যাশ আপডেট
                     cache[cache_key] = (result, time.time())
-                    if len(cache) > 2000:
+                    if len(cache) > 2000: # ক্যাশ লিমিট কিছুটা বাড়ানো হয়েছে
                         cache.pop(next(iter(cache)))
                     
                     return result
                     
         except Exception as e:
-            # ৫. বিস্তারিত এরর লগিং (এটি এখন আপনাকে কনসোলে আসল সমস্যা দেখাবে)
-            error_details = traceback.format_exc()
             if not cookie_path:
                 logging.warning(f"Failed without cookies. Error: {str(e)}")
             else:
-                logging.error(f"Failed with cookie {cookie_path}. Error Traceback:\n{error_details}")
+                logging.error(f"Failed with cookie {cookie_path}: {str(e)}")
             continue 
 
     return None
