@@ -1,18 +1,22 @@
+import java.util.Properties
+import java.io.FileInputStream
+
 plugins {
     id("com.android.application")
     id("kotlin-android")
-    // The Flutter Gradle Plugin must be applied after the Android and Kotlin Gradle plugins.
     id("dev.flutter.flutter-gradle-plugin")
 }
 
+// key.properties ফাইল থেকে ডেটা লোড করার জন্য
+val keystoreProperties = Properties()
+val keystorePropertiesFile = rootProject.file("key.properties")
+if (keystorePropertiesFile.exists()) {
+    keystoreProperties.load(FileInputStream(keystorePropertiesFile))
+}
+
 android {
-    // আপনার অ্যাপের ইউনিক নেমস্পেস
-    namespace = "com.shaon.linksyncro" 
-    
-    // এরর ফিক্স করার জন্য এখানে সরাসরি ৩৬ (36) লিখে দিন
-    compileSdk = 36 
-    
-    // টার্মিনালের এরর অনুযায়ী লেটেস্ট NDK ভার্সন
+    namespace = "com.shaon.linksyncro"
+    compileSdk = 36 // এখানে ৩৬ করা হয়েছে (প্লাগিনের রিকোয়েস্ট অনুযায়ী)
     ndkVersion = "27.0.12077973"
 
     compileOptions {
@@ -25,29 +29,45 @@ android {
     }
 
     defaultConfig {
-        // প্লে-স্টোরে আইডেন্টিফিকেশনের জন্য আপনার ইউনিক আইডি
         applicationId = "com.shaon.linksyncro"
-        
-        // ভিডিও ডাউনলোডার প্যাকেজের জন্য মিনিমাম ২৪ দেওয়া নিরাপদ
-        minSdk = 24 
-        
-        // এখানেও ৩৬ (36) করে দেওয়া হলো যাতে প্লাগইনটি ঠিকঠাক কাজ করে
-        targetSdk = 36
-        
+        minSdk = 24
+        targetSdk = 36 // এখানেও ৩৬ করা হয়েছে
         versionCode = flutter.versionCode
         versionName = flutter.versionName
     }
 
-    buildTypes {
-        release {
-            // রিলিজ বিল্ডের জন্য সাইনিং কনফিগ
-            signingConfig = signingConfigs.getByName("debug")
-            
-            // কোড অপ্টিমাইজেশন
-            isMinifyEnabled = false
-            isShrinkResources = false
+    signingConfigs {
+        // ডিবাগ কনফিগ - 'storeFile' লাইনটি সরানো হয়েছে যাতে ফাইল খুঁজে না পাওয়ার এরর না দেয়
+        getByName("debug") {
+            // ডিফল্ট ডিবাগ কি ব্যবহার হবে
+        }
+        // রিলিজ কনফিগ
+        create("release") {
+            keyAlias = keystoreProperties.getProperty("keyAlias")
+            keyPassword = keystoreProperties.getProperty("keyPassword")
+            val storeFilePath = keystoreProperties.getProperty("storeFile")
+            if (storeFilePath != null) {
+                storeFile = file(storeFilePath)
+            }
+            storePassword = keystoreProperties.getProperty("storePassword")
         }
     }
+
+    buildTypes {
+        release {
+            isMinifyEnabled = true
+            isShrinkResources = true
+            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+            signingConfig = signingConfigs.getByName("release")
+        }
+        debug {
+            signingConfig = signingConfigs.getByName("debug")
+        }
+    }
+}
+
+dependencies {
+    implementation("androidx.work:work-runtime:2.9.1")
 }
 
 flutter {

@@ -4,9 +4,9 @@ import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
-import 'package:dio/dio.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:media_scanner/media_scanner.dart';
+import 'package:path_provider/path_provider.dart';
 
 // আপনার লোকাল সার্ভিস ফাইলগুলো নিশ্চিত করুন প্রোজেক্টে আছে
 import 'youtube_service.dart';
@@ -19,11 +19,30 @@ import 'video_player_page.dart';  // আপনার তৈরি করা ফ�
 
 import 'my_audio_handler.dart';
 import 'package:audio_service/audio_service.dart';
+
+import 'dart:isolate';
+import 'dart:ui';
+import 'package:flutter_downloader/flutter_downloader.dart';
+
 late MyAudioHandler audioHandler;
 
+@pragma('vm:entry-point')
+void downloadCallback(String id, int status, int progress) {
+  final SendPort? send = IsolateNameServer.lookupPortByName('downloader_send_port');
+  send?.send([id, status, progress]);
+}
+
 void main() async {
+  // ১. বাইন্ডিং ইনিশিয়ালাইজ করুন
   WidgetsFlutterBinding.ensureInitialized();
 
+  // ২. FlutterDownloader ইনিশিয়ালাইজ করুন (এটি অবশ্যই runApp এর আগে থাকতে হবে)
+  await FlutterDownloader.initialize(
+    debug: true, 
+    ignoreSsl: true,
+  );
+
+  // ৩. অডিও সার্ভিস ইনিশিয়ালাইজ করুন
   audioHandler = await AudioService.init(
     builder: () => MyAudioHandler(),
     config: const AudioServiceConfig(
@@ -31,7 +50,7 @@ void main() async {
       androidNotificationChannelName: 'LinkSyncro Playback',
       androidNotificationIcon: 'mipmap/ic_launcher', 
       androidShowNotificationBadge: true,
-      androidStopForegroundOnPause: false, // এটি পজ করলে নোটিফিকেশন রাখবে
+      androidStopForegroundOnPause: false,
     ),
   );
 
@@ -51,7 +70,7 @@ class DownloadTask {
   bool isProcessing;
   bool isPaused;
   bool isFinished;
-  CancelToken cancelToken;
+
 
   DownloadTask({
     required this.id,
@@ -65,7 +84,7 @@ class DownloadTask {
     this.isProcessing = true,
     this.isPaused = false,
     this.isFinished = false,
-  }) : cancelToken = CancelToken();
+  });
 }
 
 class LinkSyncroApp extends StatelessWidget {
@@ -105,11 +124,58 @@ class HomeScreen extends StatefulWidget {
 }
 
 class _HomeScreenState extends State<HomeScreen> {
+
+   final ReceivePort _port = ReceivePort();
    @override
-  void initState() {
-    super.initState();
-    _checkPermission();
-  }
+void initState() {
+  super.initState();
+  _checkPermission();
+
+  // ১. আগের পোর্টটি রিমুভ করুন (Hot Reload এর সময় ক্রাশ এড়াতে এটি জরুরি)
+  IsolateNameServer.removePortNameMapping('downloader_send_port');
+
+  // ২. নতুন করে পোর্ট রেজিস্টার করুন
+  IsolateNameServer.registerPortWithName(_port.sendPort, 'downloader_send_port');
+
+  // ৩. পোর্ট লিসেনার
+  _port.listen((dynamic data) {
+    String id = data[0];
+    int status = data[1];
+    int progress = data[2];
+
+    setState(() {
+      final task = _downloadTasks.firstWhere(
+        (t) => t.id == id, 
+        orElse: () => DownloadTask(id: "", inputUrl: "")
+      );
+      
+      if (task.id.isNotEmpty) {
+        // -1 হ্যান্ডলিং: প্রগ্রেস যদি -1 হয় তবে ক্যালকুলেশন করবেন না
+        if (progress != -1) {
+          task.progress = progress / 100;
+        }
+
+        // স্ট্যাটাস আপডেট (status এর ভ্যালু সরাসরি চেক করা হচ্ছে)
+        if (status == 3) { // Complete
+          task.isFinished = true;
+          task.isProcessing = false;
+          task.statusText = "Saved to Gallery";
+        } else if (status == 4) { // Failed
+          task.statusText = "Download Failed";
+          task.isProcessing = false;
+        } else if (status == 2) { // Running
+          task.statusText = "Downloading...";
+        } else if (status == 0) { // Enqueued/Waiting
+          task.statusText = "Waiting...";
+        }
+      }
+    });
+  });
+
+  // ৪. কলব্যাক রেজিস্টার করুন
+  FlutterDownloader.registerCallback(downloadCallback);
+}
+
 
   Future<void> _checkPermission() async {
     if (await Permission.notification.isDenied) {
@@ -122,11 +188,6 @@ class _HomeScreenState extends State<HomeScreen> {
   final FacebookService _fbService = FacebookService();
   final InstagramService _igService = InstagramService();
   
-  final Dio _dio = Dio(BaseOptions(
-    connectTimeout: const Duration(seconds: 30),
-    receiveTimeout: const Duration(minutes: 20),
-  ));
-
   Future<void> _pasteFromClipboard() async {
     final data = await Clipboard.getData('text/plain');
     if (data?.text != null) {
@@ -169,33 +230,70 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<void> _startDownloadProcess(DownloadTask task) async {
-    try {
-      final result = await _resolveLink(task.inputUrl);
-      setState(() {
-        task.downloadUrl = result['url'];
-        task.videoTitle = result['title'] ?? "Video_${task.id}";
-        task.thumbnailUrl = result['thumbnail'];
-      });
+  try {
+    // ১. সার্ভার থেকে ভিডিও লিঙ্ক আনা
+    final result = await _resolveLink(task.inputUrl);
+    
+    // ২. UI আপডেট করা
+    setState(() {
+      task.downloadUrl = result['url'];
+      task.videoTitle = result['title'] ?? "Video_${task.id}";
+      task.thumbnailUrl = result['thumbnail'];
+    });
 
-      if (task.downloadUrl == null) throw "Invalid response from server";
+    if (task.downloadUrl == null) throw "Invalid response from server";
 
-      const root = "/storage/emulated/0";
-      final folder = Directory("$root/Download/LinkSyncro");
-      if (!await folder.exists()) await folder.create(recursive: true);
-
-      // ফাইল নেম ক্লিনিং এবং লেন্থ লিমিট (Error 36 Fix)
-      String cleanName = task.videoTitle!.replaceAll(RegExp(r'[<>:"/\\|?*]'), '').trim();
-      if (cleanName.length > 50) {
-        cleanName = cleanName.substring(0, 50).trim();
-      }
-      if (cleanName.isEmpty) cleanName = "Video_${task.id}";
-
-      task.savePath = "${folder.path}/$cleanName.mp4";
-      await _executeDownload(task);
-    } catch (e) {
-      _handleTaskError(task, e);
+    // ৩. সঠিক ডিরেক্টরি খুঁজে বের করা (Android 11+ এর জন্য নিরাপদ উপায়)
+    final directory = await getExternalStorageDirectory();
+    if (directory == null) throw "Storage access denied";
+    
+    // ডাউনলোড ফোল্ডার সেট করা
+    final folder = Directory("${directory.path}/LinkSyncro");
+    if (!await folder.exists()) {
+      await folder.create(recursive: true);
     }
+
+    // ৪. ফাইল নেম ক্লিনিং এবং লেন্থ লিমিট
+    String cleanName = task.videoTitle!.replaceAll(RegExp(r'[<>:"/\\|?*]'), '').trim();
+    if (cleanName.length > 50) {
+      cleanName = cleanName.substring(0, 50).trim();
+    }
+    if (cleanName.isEmpty) cleanName = "Video_${task.id}";
+
+    // ৫. সেভ পাথ সেট করা
+    task.savePath = "${folder.path}/$cleanName.mp4";
+
+    // ৬. ডাউনলোড এক্সিকিউট করা
+    await _executeDownload(task);
+    
+  } catch (e) {
+    // এরর হ্যান্ডলিং
+    _handleTaskError(task, e);
   }
+}
+
+Future<void> _executeDownload(DownloadTask task) async {
+  try {
+    final taskId = await FlutterDownloader.enqueue(
+      url: task.downloadUrl!,
+      savedDir: task.savePath!.substring(0, task.savePath!.lastIndexOf('/')), // ফোল্ডার পাথ
+      fileName: task.savePath!.split('/').last, // ফাইলের নাম
+      showNotification: true,
+      openFileFromNotification: true,
+      saveInPublicStorage: true,
+    );
+
+    if (taskId != null) {
+      setState(() {
+        task.id = taskId;
+        task.statusText = "Downloading...";
+      });
+    }
+  } catch (e) {
+    debugPrint("Execute Error: $e");
+    _handleTaskError(task, "Download request failed");
+  }
+}
 
   Future<Map<String, dynamic>> _resolveLink(String input) async {
     if (_ytService.isYouTubeLink(input)) return await _ytService.getVideoDetails(input);
@@ -212,90 +310,20 @@ class _HomeScreenState extends State<HomeScreen> {
     throw "Proxy server failed to respond";
   }
 
-  Future<void> _executeDownload(DownloadTask task) async {
-    RandomAccessFile? raf;
-    try {
-      File file = File(task.savePath!);
-      int downloadedBytes = 0;
-      if (await file.exists()) {
-        downloadedBytes = await file.length();
-      }
-
-      setState(() {
-        task.isProcessing = true;
-        task.isFinished = false;
-        task.statusText = task.isPaused ? "Paused" : "Downloading...";
-      });
-
-      task.cancelToken = CancelToken();
-
-      Response response = await _dio.get(
-        task.downloadUrl!,
-        onReceiveProgress: (received, total) {
-          if (total != -1) {
-            setState(() {
-              task.progress = (received + downloadedBytes) / (total + downloadedBytes);
-            });
-          }
-        },
-        options: Options(
-          responseType: ResponseType.stream,
-          headers: {"range": "bytes=$downloadedBytes-"},
-        ),
-        cancelToken: task.cancelToken,
-      );
-
-      if (response.statusCode == 416) {
-        if (await file.exists()) await file.delete();
-        setState(() => task.progress = 0);
-        await _executeDownload(task);
-        return;
-      }
-
-      raf = await file.open(mode: FileMode.append);
-      Stream<Uint8List> stream = response.data.stream;
-      await for (var chunk in stream) {
-        if (task.isPaused) break;
-        await raf.writeFrom(chunk);
-      }
-      await raf.close();
-
-      if (!task.isPaused) {
-        await MediaScanner.loadMedia(path: task.savePath!);
-        setState(() {
-          task.isProcessing = false;
-          task.isFinished = true;
-          task.progress = 1.0;
-          task.statusText = "Saved to Gallery";
-        });
-      }
-    } catch (e) {
-      if (raf != null) await raf.close();
-      if (e is DioException && CancelToken.isCancel(e)) return;
-      _handleTaskError(task, e);
-    }
-  }
 
   void _togglePauseResume(DownloadTask task) {
     if (task.isPaused) {
+      FlutterDownloader.resume(taskId: task.id);
       setState(() => task.isPaused = false);
-      _executeDownload(task);
     } else {
-      setState(() {
-        task.isPaused = true;
-        task.statusText = "Paused";
-      });
-      task.cancelToken.cancel("Paused");
+      FlutterDownloader.pause(taskId: task.id);
+      setState(() => task.isPaused = true);
     }
   }
 
   void _cancelDownload(DownloadTask task) {
-    task.cancelToken.cancel("Cancelled");
-    File file = File(task.savePath ?? "");
-    if (file.existsSync()) file.deleteSync();
-    setState(() {
-      _downloadTasks.remove(task);
-    });
+    FlutterDownloader.cancel(taskId: task.id);
+    setState(() => _downloadTasks.remove(task));
     _showToast("Download Cancelled");
   }
 
@@ -328,275 +356,249 @@ class _HomeScreenState extends State<HomeScreen> {
  @override
 Widget build(BuildContext context) {
   final bool isDark = Theme.of(context).brightness == Brightness.dark;
+  final Color bgColor = isDark ? const Color(0xFF0F111A) : const Color(0xFFF8F9FA);
 
   return Scaffold(
-    // ১. ড্রয়ার (Drawer) সেকশন - যা বাম পাশ দিয়ে বের হবে
+    backgroundColor: bgColor,
+    // ১. ড্রয়ার (Drawer)
     drawer: Drawer(
       backgroundColor: isDark ? const Color(0xFF1C1F2E) : Colors.white,
       child: Column(
         children: [
           DrawerHeader(
-            decoration: const BoxDecoration(
-              color: Colors.indigo,
-            ),
+            decoration: const BoxDecoration(color: Colors.indigo),
             child: Center(
               child: Column(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
                   const Icon(Icons.sync_rounded, color: Colors.white, size: 50),
                   const SizedBox(height: 10),
-                  Text(
-                    "LINKSYNCRO PRO",
-                    style: TextStyle(
-                      color: Colors.white,
-                      fontSize: 18,
-                      fontWeight: FontWeight.bold,
-                      letterSpacing: 1.2,
-                    ),
-                  ),
+                  const Text("LINKSYNCRO PRO", style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold, letterSpacing: 1.2)),
                 ],
               ),
             ),
           ),
-          ListTile(
-            leading: const Icon(Icons.settings_outlined, color: Colors.indigo),
-            title: const Text("Settings"),
-            onTap: () {
-              // সেটিংস এ ক্লিক করলে যা হবে
-              Navigator.pop(context); // ড্রয়ার বন্ধ হবে
-            },
-          ),
-          ListTile(
-            leading: const Icon(Icons.history_rounded, color: Colors.indigo),
-            title: const Text("Download History"),
-            onTap: () => Navigator.pop(context),
-          ),
+          ListTile(leading: const Icon(Icons.settings_outlined, color: Colors.indigo), title: const Text("Settings"), onTap: () => Navigator.pop(context)),
+          ListTile(leading: const Icon(Icons.history_rounded, color: Colors.indigo), title: const Text("Download History"), onTap: () => Navigator.pop(context)),
           const Divider(),
-          ListTile(
-            leading: const Icon(Icons.info_outline, color: Colors.indigo),
-            title: const Text("About"),
-            onTap: () => Navigator.pop(context),
-          ),
+          ListTile(leading: const Icon(Icons.info_outline, color: Colors.indigo), title: const Text("About"), onTap: () => Navigator.pop(context)),
         ],
       ),
     ),
 
-    // ২. AppBar সেকশন - যেখানে ড্রয়ার বাটন (৩টি দাগ) থাকবে
+    // ২. AppBar
     appBar: AppBar(
-      backgroundColor: isDark ? const Color(0xFF0F111A) : Colors.white,
+      backgroundColor: Colors.transparent,
       elevation: 0,
-      centerTitle: false,
-      // leading এ Builder ব্যবহার করা হয়েছে যেন ড্রয়ারটি ঠিকমতো ওপেন হয়
-      leading: Builder(
-        builder: (context) => IconButton(
-          icon: const Icon(Icons.menu_rounded, color: Colors.indigo, size: 28), // র‍্যাগ র‍্যাগ আইকন
-          onPressed: () => Scaffold.of(context).openDrawer(),
-          tooltip: "Settings Menu",
-        ),
-      ),
-      title: Text(
-        "LINKSYNCRO",
-        style: TextStyle(
-          fontSize: 22,
-          fontWeight: FontWeight.w900,
-          letterSpacing: 1.5,
-          color: isDark ? Colors.white : Colors.indigo[900],
-        ),
-      ),
+      iconTheme: IconThemeData(color: isDark ? Colors.white : Colors.indigo),
+      title: Text("LINKSYNCRO", style: TextStyle(fontWeight: FontWeight.w900, letterSpacing: 1.5, color: isDark ? Colors.white : Colors.indigo)),
       actions: [
         IconButton(
-          icon: const Icon(Icons.video_library_rounded, color: Colors.indigo, size: 28),
-          tooltip: "গ্যালারি",
-          onPressed: () {
-            Navigator.push(
-              context,
-              MaterialPageRoute(builder: (context) => const VideoGalleryPage()),
-            );
-          },
+          icon: Icon(Icons.delete_sweep_rounded, color: isDark ? Colors.white : Colors.indigo),
+          tooltip: "Clear Completed",
+          onPressed: () => setState(() => _downloadTasks.retainWhere((t) => !t.isFinished)),
+        ),
+        IconButton(
+          icon: Icon(Icons.video_library_rounded, color: isDark ? Colors.white : Colors.indigo),
+          onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (context) => const VideoGalleryPage())),
         ),
         const SizedBox(width: 10),
       ],
     ),
 
-    body: SafeArea(
-      child: Column(
-        children: [
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
-            child: Column(
-              children: [
-                const SizedBox(height: 10),
-                // লিঙ্ক পেস্ট করার বক্স
-                Container(
-                  decoration: BoxDecoration(
-                    color: isDark ? Colors.white.withOpacity(0.08) : Colors.white,
-                    borderRadius: BorderRadius.circular(18),
-                    boxShadow: isDark ? [] : [
-                      BoxShadow(
-                        color: Colors.black.withOpacity(0.05),
-                        blurRadius: 20,
-                        offset: const Offset(0, 10),
-                      )
-                    ],
-                  ),
-                  child: TextField(
-                    controller: _urlController,
-                    style: TextStyle(color: isDark ? Colors.white : Colors.black87),
-                    decoration: InputDecoration(
-                      hintText: "Paste video link here...",
-                      hintStyle: TextStyle(color: isDark ? Colors.white54 : Colors.black38),
-                      prefixIcon: const Icon(Icons.link_rounded, color: Colors.indigo),
-                      suffixIcon: IconButton(
-                        icon: const Icon(Icons.content_paste_rounded, color: Colors.indigo),
-                        onPressed: _pasteFromClipboard,
-                      ),
-                      border: InputBorder.none,
-                      contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 15),
-                    ),
-                  ),
+    // ৩. বডি সেকশন
+    body: Column(
+      children: [
+        // ইনপুট কার্ড (স্লিক ডিজাইন)
+        Container(
+          margin: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+          padding: const EdgeInsets.all(20),
+          decoration: BoxDecoration(
+            color: isDark ? const Color(0xFF1C1F2E) : Colors.white,
+            borderRadius: BorderRadius.circular(25),
+            boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 15, offset: const Offset(0, 5))],
+          ),
+          child: Column(
+            children: [
+              TextField(
+                controller: _urlController,
+                decoration: InputDecoration(
+                  filled: true,
+                  fillColor: isDark ? Colors.white.withOpacity(0.05) : Colors.grey[100],
+                  hintText: "Paste video link here...",
+                  prefixIcon: const Icon(Icons.link_rounded, color: Colors.indigo),
+                  suffixIcon: IconButton(icon: const Icon(Icons.content_paste_rounded, color: Colors.indigo), onPressed: _pasteFromClipboard),
+                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(15), borderSide: BorderSide.none),
                 ),
-                const SizedBox(height: 20),
-                // ডাউনলোড বাটন
-                ElevatedButton(
+              ),
+              const SizedBox(height: 15),
+              SizedBox(
+                width: double.infinity,
+                height: 50,
+                child: ElevatedButton(
                   style: ElevatedButton.styleFrom(
-                    minimumSize: const Size(double.infinity, 55),
                     backgroundColor: Colors.indigo,
                     foregroundColor: Colors.white,
-                    elevation: 0,
                     shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
+                    elevation: 0,
                   ),
                   onPressed: _addNewDownload,
-                  child: const Text(
-                    "DOWNLOAD NOW", 
-                    style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)
-                  ),
+                  child: const Text("DOWNLOAD NOW", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
                 ),
-              ],
-            ),
+              ),
+            ],
           ),
-          // ডাউনলোড লিস্ট
-          Expanded(
-            child: _downloadTasks.isEmpty 
-              ? Center(
-                  child: Text(
-                    "No downloads yet", 
-                    style: TextStyle(color: isDark ? Colors.white30 : Colors.black26)
-                  )
-                )
-              : ListView.builder(
-                  padding: const EdgeInsets.symmetric(horizontal: 20),
-                  itemCount: _downloadTasks.length,
-                  itemBuilder: (context, index) {
-                    return _buildDownloadCard(_downloadTasks[index], isDark);
-                  },
+        ),
+        
+        // ৪. ডাউনলোড লিস্ট
+        Expanded(
+          child: _downloadTasks.isEmpty 
+            ? Center(
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Icon(Icons.cloud_download_outlined, size: 80, color: Colors.indigo.withOpacity(0.2)),
+                    const SizedBox(height: 16),
+                    Text("No downloads yet", style: TextStyle(fontSize: 16, color: isDark ? Colors.white38 : Colors.grey)),
+                  ],
                 ),
-          ),
-        ],
-      ),
+              )
+            : ListView.builder(
+                padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+                physics: const BouncingScrollPhysics(), // স্মুথ স্ক্রলিং
+                itemCount: _downloadTasks.length,
+                itemBuilder: (context, index) {
+                  final task = _downloadTasks[index];
+                  return Dismissible(
+                    key: Key(task.id),
+                    background: Container(
+                      margin: const EdgeInsets.only(bottom: 16),
+                      decoration: BoxDecoration(color: Colors.redAccent, borderRadius: BorderRadius.circular(24)),
+                      alignment: Alignment.centerRight,
+                      padding: const EdgeInsets.only(right: 20),
+                      child: const Icon(Icons.delete, color: Colors.white),
+                    ),
+                    onDismissed: (direction) => setState(() => _downloadTasks.removeAt(index)),
+                    child: _buildDownloadCard(task, isDark),
+                  );
+                },
+              ),
+        ),
+      ],
     ),
   );
 }
 
 
-  Widget _buildDownloadCard(DownloadTask task, bool isDark) {
-    return Container(
-      margin: const EdgeInsets.only(bottom: 16),
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: isDark ? const Color(0xFF1C1F2E) : Colors.white,
-        borderRadius: BorderRadius.circular(24),
-        boxShadow: isDark ? [] : [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.03),
-            blurRadius: 15,
-            offset: const Offset(0, 8),
-          )
-        ],
-      ),
-      child: Column(
-        children: [
-          Row(
-            children: [
-              Container(
-                width: 90,
-                height: 55,
-                decoration: BoxDecoration(
-                  color: isDark ? Colors.white10 : Colors.grey[200],
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: ClipRRect(
-                  borderRadius: BorderRadius.circular(12),
-                  child: task.thumbnailUrl != null
-                      ? Image.network(task.thumbnailUrl!, fit: BoxFit.cover)
-                      : Icon(Icons.play_circle_fill, color: isDark ? Colors.white24 : Colors.black26),
-                ),
+
+ Widget _buildDownloadCard(DownloadTask task, bool isDark) {
+  // প্রগ্রেস যদি -1 হয়, তবে UI-তে ০ দেখানোর জন্য সেফ ভেরিয়েবল
+  final double safeProgress = (task.progress < 0) ? 0.0 : task.progress;
+  final String displayProgress = (task.progress < 0) ? "0%" : "${(task.progress * 100).toStringAsFixed(0)}%";
+
+  return Container(
+    margin: const EdgeInsets.only(bottom: 16),
+    padding: const EdgeInsets.all(16),
+    decoration: BoxDecoration(
+      color: isDark ? const Color(0xFF1C1F2E) : Colors.white,
+      borderRadius: BorderRadius.circular(24),
+      boxShadow: isDark ? [] : [
+        BoxShadow(
+          color: Colors.black.withOpacity(0.03),
+          blurRadius: 15,
+          offset: const Offset(0, 8),
+        )
+      ],
+    ),
+    child: Column(
+      children: [
+        Row(
+          children: [
+            // থাম্বনেইল সেকশন
+            Container(
+              width: 90,
+              height: 55,
+              decoration: BoxDecoration(
+                color: isDark ? Colors.white10 : Colors.grey[200],
+                borderRadius: BorderRadius.circular(12),
               ),
-              const SizedBox(width: 15),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      task.videoTitle ?? "Processing URL...",
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        fontWeight: FontWeight.bold,
-                        fontSize: 14,
-                        color: isDark ? Colors.white : Colors.black87,
-                      ),
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      task.statusText,
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: task.statusText.contains("Error") ? Colors.redAccent : (isDark ? Colors.white60 : Colors.black54),
-                      ),
-                    ),
-                  ],
-                ),
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(12),
+                child: task.thumbnailUrl != null
+                    ? Image.network(task.thumbnailUrl!, fit: BoxFit.cover)
+                    : Icon(Icons.play_circle_fill, color: isDark ? Colors.white24 : Colors.black26),
               ),
-              if (!task.isFinished) ...[
-                IconButton(
-                  icon: Icon(task.isPaused ? Icons.play_arrow_rounded : Icons.pause_rounded),
-                  onPressed: () => _togglePauseResume(task),
-                  visualDensity: VisualDensity.compact,
-                ),
-                IconButton(
-                  icon: const Icon(Icons.close_rounded, color: Colors.redAccent),
-                  onPressed: () => _cancelDownload(task),
-                  visualDensity: VisualDensity.compact,
-                ),
-              ] else ...[
-                const Icon(Icons.check_circle_rounded, color: Colors.greenAccent),
-              ],
-            ],
-          ),
-          const SizedBox(height: 18),
-          ClipRRect(
-            borderRadius: BorderRadius.circular(10),
-            child: LinearProgressIndicator(
-              value: task.progress,
-              minHeight: 6,
-              backgroundColor: isDark ? Colors.white10 : Colors.grey[200],
-              valueColor: AlwaysStoppedAnimation(task.isFinished ? Colors.greenAccent : Colors.indigo),
             ),
-          ),
-          const SizedBox(height: 8),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Text(
-                "${(task.progress * 100).toStringAsFixed(0)}%",
-                style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: isDark ? Colors.white70 : Colors.black54),
+            const SizedBox(width: 15),
+            // টাইটেল এবং স্ট্যাটাস টেক্সট
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    task.videoTitle ?? "Processing URL...",
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontWeight: FontWeight.bold,
+                      fontSize: 14,
+                      color: isDark ? Colors.white : Colors.black87,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    task.statusText,
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: task.statusText.contains("Error") ? Colors.redAccent : (isDark ? Colors.white60 : Colors.black54),
+                    ),
+                  ),
+                ],
               ),
-              if (task.isFinished)
-                const Text("COMPLETED", style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: Colors.greenAccent)),
+            ),
+            // বাটন লজিক (পজ/ক্যান্সেল)
+            if (!task.isFinished) ...[
+              IconButton(
+                icon: Icon(task.isPaused ? Icons.play_arrow_rounded : Icons.pause_rounded),
+                onPressed: () => _togglePauseResume(task),
+                visualDensity: VisualDensity.compact,
+              ),
+              IconButton(
+                icon: const Icon(Icons.close_rounded, color: Colors.redAccent),
+                onPressed: () => _cancelDownload(task),
+                visualDensity: VisualDensity.compact,
+              ),
+            ] else ...[
+              const Icon(Icons.check_circle_rounded, color: Colors.greenAccent),
             ],
+          ],
+        ),
+        const SizedBox(height: 18),
+        // প্রগ্রেস বার (সেফ ভ্যালু দিয়ে আপডেট করা)
+        ClipRRect(
+          borderRadius: BorderRadius.circular(10),
+          child: LinearProgressIndicator(
+            value: safeProgress,
+            minHeight: 6,
+            backgroundColor: isDark ? Colors.white10 : Colors.grey[200],
+            valueColor: AlwaysStoppedAnimation(task.isFinished ? Colors.greenAccent : Colors.indigo),
           ),
-        ],
-      ),
-    );
-  }
+        ),
+        const SizedBox(height: 8),
+        // পার্সেন্টেজ টেক্সট এবং কমপ্লিটেড স্ট্যাটাস
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            Text(
+              displayProgress,
+              style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: isDark ? Colors.white70 : Colors.black54),
+            ),
+            if (task.isFinished)
+              const Text("COMPLETED", style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: Colors.greenAccent)),
+          ],
+        ),
+      ],
+    ),
+  );
+}
 }
