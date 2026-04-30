@@ -262,52 +262,46 @@ Future<void> _executeDownload(DownloadTask task) async {
 }
 
   Future<Map<String, dynamic>> _resolveLink(String input) async {
-    if (_ytService.isYouTubeLink(input)) return await _ytService.getVideoDetails(input);
-    if (_fbService.isFacebookLink(input)) return await _fbService.getVideoDetails(input);
-    if (_igService.isInstagramLink(input)) return await _igService.getVideoDetails(input);
+  if (_ytService.isYouTubeLink(input)) return await _ytService.getVideoDetails(input);
+  if (_fbService.isFacebookLink(input)) return await _fbService.getVideoDetails(input);
+  if (_igService.isInstagramLink(input)) return await _igService.getVideoDetails(input);
 
-    // আপনার সব রেন্ডার লিঙ্ক এখানে সিরিয়ালি দিন
-    final List<String> customApiUrls = [
-      "https://linksyncro-api-8itj.onrender.com",
-      "https://linksyncro-api.onrender.com",
-    ];
+  final List<String> customApiUrls = [
+    "https://linksyncro-api-8itj.onrender.com/exec",
+    "https://linksyncro-api.onrender.com/exec",
+  ];
 
-    String? lastError;
+  String? lastError;
 
-    // লুপের মাধ্যমে সব রেন্ডার সার্ভার চেক করা হবে
-    for (String apiUrl in customApiUrls) {
-      try {
-        final uri = Uri.parse("$apiUrl/get_media?url=${Uri.encodeComponent(input)}");
-        final response = await http.get(uri).timeout(const Duration(seconds: 40));
-
-        if (response.statusCode == 200) {
-          return jsonDecode(utf8.decode(response.bodyBytes));
-        } else {
-          lastError = "Server Status: ${response.statusCode}";
-          continue; // এই সার্ভারে সমস্যা হলে পরেরটায় যাবে
-        }
-      } catch (e) {
-        lastError = e.toString();
-        debugPrint("API Attempt Failed on $apiUrl: $e");
-        continue; 
-      }
-    }
-
-    // সব রেন্ডার সার্ভার ফেল করলে শেষে গুগল স্ক্রিপ্ট ট্রাই করবে
+  for (String apiUrl in customApiUrls) {
     try {
-      const String googleScriptUrl = "https://script.google.com/macros/s/AKfycbxsns846mdhcNrberwkvdB12yJ58pVg3yE6b4tbvp6rOWPxdjYvN7xeEDbIfID0_CrqJg/exec";
-      final uri = Uri.parse("$googleScriptUrl?url=${Uri.encodeComponent(input)}");
-      
-      final response = await http.get(uri).timeout(const Duration(seconds: 45));
+      final uri = Uri.parse("$apiUrl?url=${Uri.encodeComponent(input)}");
+      final response = await http.get(uri).timeout(const Duration(seconds: 35));
+
       if (response.statusCode == 200) {
         return jsonDecode(utf8.decode(response.bodyBytes));
-      } else {
-        throw "Status: ${response.statusCode}";
       }
     } catch (e) {
-     throw "সবগুলো সার্ভার এই মুহূর্তে বিজি। কিছুক্ষণ পর চেষ্টা করুন। ($lastError)";
+      lastError = e.toString();
+      debugPrint("Custom API Attempt Failed: $e");
+      continue; 
     }
   }
+
+  try {
+    const String googleScriptUrl = "https://script.google.com/macros/s/AKfycbxsns846mdhcNrberwkvdB12yJ58pVg3yE6b4tbvp6rOWPxdjYvN7xeEDbIfID0_CrqJg/exec";
+    final uri = Uri.parse("$googleScriptUrl?url=${Uri.encodeComponent(input)}");
+    
+    final response = await http.get(uri).timeout(const Duration(seconds: 45));
+    if (response.statusCode == 200) {
+      return jsonDecode(utf8.decode(response.bodyBytes));
+    } else {
+      throw "Status: ${response.statusCode}";
+    }
+  } catch (e) {
+   throw "Servers are busy. Please try again later. ($lastError)";
+  }
+}
 
   void _togglePauseResume(DownloadTask task) {
     if (task.isPaused) {
@@ -325,40 +319,20 @@ Future<void> _executeDownload(DownloadTask task) async {
     _showToast("Download Cancelled");
   }
 
- void _handleTaskError(DownloadTask task, dynamic e) {
-  String displayMsg = "Error occurred";
-  String errorString = e.toString();
-
-  if (errorString.contains("FileSystemException")) {
-    displayMsg = "Storage Error: Name too long or Permission denied";
-  } 
-  // ১০টি সার্ভার ব্যবহারের ক্ষেত্রে ৪২৯ এরর মানে হলো বর্তমান সার্ভারের লিমিট শেষ
-  else if (errorString.contains("429")) {
-    displayMsg = "Server busy. Switching to backup...";
-  } 
-  // ভিডিও যদি না পাওয়া যায় (প্রাইভেট বা ডিলিটেড)
-  else if (errorString.contains("404")) {
-    displayMsg = "Video not found or Private content";
+  void _handleTaskError(DownloadTask task, dynamic e) {
+    String displayMsg = "Error occurred";
+    if (e.toString().contains("FileSystemException")) {
+      displayMsg = "Storage Error: Name too long";
+    } else if (e.toString().contains("429")) {
+      displayMsg = "YouTube Limit: Try in 5 min";
+    }
+    setState(() {
+      task.isProcessing = false;
+      task.isPaused = false;
+      task.statusText = displayMsg;
+    });
+    _showToast(displayMsg, isError: true);
   }
-  // নেটওয়ার্ক স্লো থাকলে বা রেন্ডার সার্ভার ঘুমানো অবস্থায় থাকলে
-  else if (errorString.contains("TimeoutException")) {
-    displayMsg = "Request timed out. Please try again";
-  }
-  // অন্য কোনো ইন্টারনাল এরর
-  else if (errorString.contains("500")) {
-    displayMsg = "Internal Server Error. Try later";
-  }
-
-  setState(() {
-    task.isProcessing = false;
-    task.isPaused = false;
-    // টাস্কের স্ট্যাটাস টেক্সট আপডেট
-    task.statusText = displayMsg;
-  });
-
-  // ইউজারকে টোস্ট মেসেজ দেখানো
-  _showToast(displayMsg, isError: true);
-}
 
   void _showToast(String message, {bool isError = false}) {
     ScaffoldMessenger.of(context).showSnackBar(

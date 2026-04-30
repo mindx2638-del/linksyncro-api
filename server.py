@@ -4,9 +4,7 @@ import logging
 import time
 import asyncio
 import hashlib
-import sys
 import os
-sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from urllib.parse import urlparse
@@ -204,21 +202,12 @@ async def get_media(url: str, request: Request):
     except Exception as e:
         logging.error(f"Critical Error: {str(e)}")
         raise HTTPException(status_code=500, detail="Internal server error")
-    
-@app.get("/exec")
-async def exec_alias(url: str, request: Request):
-    """এটি আপনার ফ্লাটার অ্যাপের পুরনো /exec কলগুলোকে সাপোর্ট দিবে"""
-    return await get_media(url, request)
-
-@app.get("/")
-async def health_check():
-    return {"status": "online", "message": "LinkSyncro API is live!"}
 
 # -----------------------------
 # RUNNER
 # -----------------------------
 if __name__ == "__main__":
     import uvicorn
-    
+    import os
     port = int(os.environ.get("PORT", 8080)) 
     uvicorn.run(app, host="0.0.0.0", port=port)
