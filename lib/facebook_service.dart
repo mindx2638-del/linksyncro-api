@@ -3,13 +3,16 @@ import 'package:http/http.dart' as http;
 import 'dart:async';
 
 class FacebookService {
-  // API Endpoint (Ensure this matches your FastAPI '/get_media' route)
-  static const String _apiUrl = "https://linksyncro-api.onrender.com/get_media";
   
-  // API Key (Must match the key defined in your FastAPI backend)
+  final List<String> _apiBaseUrls = [
+    "https://linksyncro-api-production.up.railway.app", // Railway (Primary)
+    "https://linksyncro-api.onrender.com",             // Render (Backup)
+  ];
+  
+  // API Key (আপনার ব্যাকএন্ডের সাথে মিল রেখে)
   static const String _apiKey = "demo_key_123"; 
 
-  // Logic to identify various Facebook URL formats (Regular, Watch, FB.com)
+  // ফেসবুক লিঙ্ক চেনার লজিক (অপরিবর্তিত রাখা হয়েছে)
   bool isFacebookLink(String url) {
     String lowerUrl = url.toLowerCase();
     return lowerUrl.contains("facebook.com") || 
@@ -18,48 +21,54 @@ class FacebookService {
   }
 
   Future<Map<String, String>> getVideoDetails(String url) async {
-    try {
-      // 1. URL Cleaning: Trim whitespace to ensure valid encoding
-      String targetUrl = url.trim();
+    String targetUrl = url.trim();
+    String? lastErrorMessage;
 
-      // 2. API Call with API Key in Headers
-      final response = await http.get(
-        Uri.parse("$_apiUrl?url=${Uri.encodeComponent(targetUrl)}"),
-        headers: {
-          "x-api-key": _apiKey,
-          "Accept": "application/json",
-        },
-      ).timeout(const Duration(seconds: 45)); // Increased timeout for server processing
-
-      if (response.statusCode == 200) {
-        final data = jsonDecode(response.body);
+    // ২. লুপ চালিয়ে প্রতিটি সার্ভার চেক করা হবে
+    for (String baseUrl in _apiBaseUrls) {
+      try {
+        final uri = Uri.parse("$baseUrl/get_media?url=${Uri.encodeComponent(targetUrl)}");
         
-        if (data['status'] == 'success') {
-          return {
-            'url': data['url']?.toString() ?? "",
-            'title': data['title']?.toString() ?? "FB_Video_${DateTime.now().millisecondsSinceEpoch}",
-            'thumbnail': data['thumbnail']?.toString() ?? "", 
-            'source': data['source']?.toString() ?? "Facebook",
-          };
-        } else {
-          throw data['message'] ?? "Video details not found.";
+        final response = await http.get(
+          uri,
+          headers: {
+            "x-api-key": _apiKey,
+            "Accept": "application/json",
+          },
+        ).timeout(const Duration(seconds: 35)); // প্রতিটি সার্ভারের জন্য অপ্টিমাইজড টাইমআউট
+
+        if (response.statusCode == 200) {
+          final data = jsonDecode(response.body);
+          
+          if (data['status'] == 'success') {
+            return {
+              'url': data['url']?.toString() ?? "",
+              'title': data['title']?.toString() ?? "FB_Video_${DateTime.now().millisecondsSinceEpoch}",
+              'thumbnail': data['thumbnail']?.toString() ?? "", 
+              'source': data['source']?.toString() ?? "Facebook",
+            };
+          } else {
+            // যদি এপিআই থেকে সাকসেস না আসে, তবে এরর মেসেজ স্টোর করে পরের সার্ভারে যাবে
+            lastErrorMessage = data['message'];
+            continue;
+          }
+        } else if (response.statusCode == 401) {
+          throw "Invalid or unauthorized API Key."; // API Key ভুল থাকলে সাথে সাথে থামবে
+        } else if (response.statusCode == 429) {
+          lastErrorMessage = "সার্ভার লিমিট শেষ (Rate Limit)।";
+          continue; // পরের সার্ভার ট্রাই করবে
         }
-      } else if (response.statusCode == 401) {
-        throw "Invalid or unauthorized API Key.";
-      } else if (response.statusCode == 429) {
-        throw "Too many requests. Please try again later.";
-      } else {
-        final errorData = jsonDecode(response.body);
-        throw errorData['detail'] ?? "Server Error: ${response.statusCode}";
+      } catch (e) {
+        if (e is TimeoutException) {
+          lastErrorMessage = "সার্ভার রেসপন্স দিচ্ছে না (Timeout)।";
+        } else {
+          lastErrorMessage = e.toString();
+        }
+        // কোনো এরর হলে লুপ থামবে না, পরের সার্ভার চেক করবে
+        continue; 
       }
-    } catch (e) {
-      // User-friendly error handling
-      if (e is TimeoutException) {
-        throw "Connection timed out. Please try again.";
-      }
-      
-      // Generic error fallback
-      throw "Could not retrieve Facebook video. Please ensure the link is public.";
     }
+
+    throw lastErrorMessage ?? "সার্ভারে সংযোগ দেওয়া যাচ্ছে না। দয়া করে লিঙ্কটি পাবলিক কি না চেক করুন।";
   }
 }

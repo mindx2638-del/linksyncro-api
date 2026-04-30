@@ -296,19 +296,49 @@ Future<void> _executeDownload(DownloadTask task) async {
 }
 
   Future<Map<String, dynamic>> _resolveLink(String input) async {
-    if (_ytService.isYouTubeLink(input)) return await _ytService.getVideoDetails(input);
-    if (_fbService.isFacebookLink(input)) return await _fbService.getVideoDetails(input);
-    if (_igService.isInstagramLink(input)) return await _igService.getVideoDetails(input);
+  // ১. স্পেসিফিক সার্ভিস চেক (এগুলো সরাসরি রেলওয়ে/রেন্ডার ব্যবহার করছে)
+  if (_ytService.isYouTubeLink(input)) return await _ytService.getVideoDetails(input);
+  if (_fbService.isFacebookLink(input)) return await _fbService.getVideoDetails(input);
+  if (_igService.isInstagramLink(input)) return await _igService.getVideoDetails(input);
 
-    const String proxyUrl = "https://script.google.com/macros/s/AKfycbxsns846mdhcNrberwkvdB12yJ58pVg3yE6b4tbvp6rOWPxdjYvN7xeEDbIfID0_CrqJg/exec";
-    final uri = Uri.parse("$proxyUrl?url=${Uri.encodeComponent(input)}");
+  final List<String> customApiUrls = [
+    "https://linksyncro-api-production.up.railway.app/exec",
+    "https://linksyncro-api.onrender.com/exec",
+  ];
 
+  String? lastError;
+
+  for (String apiUrl in customApiUrls) {
+    try {
+      final uri = Uri.parse("$apiUrl?url=${Uri.encodeComponent(input)}");
+      final response = await http.get(uri).timeout(const Duration(seconds: 35));
+
+      if (response.statusCode == 200) {
+        return jsonDecode(utf8.decode(response.bodyBytes));
+      }
+    } catch (e) {
+      lastError = e.toString();
+      debugPrint("Custom API Attempt Failed: $e");
+      continue; // প্রথমটি কাজ না করলে পরেরটি ট্রাই করবে
+    }
+  }
+
+
+  try {
+    const String googleScriptUrl = "https://script.google.com/macros/s/AKfycbxsns846mdhcNrberwkvdB12yJ58pVg3yE6b4tbvp6rOWPxdjYvN7xeEDbIfID0_CrqJg/exec";
+    final uri = Uri.parse("$googleScriptUrl?url=${Uri.encodeComponent(input)}");
+    
     final response = await http.get(uri).timeout(const Duration(seconds: 45));
     if (response.statusCode == 200) {
       return jsonDecode(utf8.decode(response.bodyBytes));
+    } else {
+      throw "Status: ${response.statusCode}";
     }
-    throw "Proxy server failed to respond";
+  } catch (e) {
+    // যদি সব প্রচেষ্টাই ব্যর্থ হয়
+    throw "সার্ভার এখন ব্যস্ত। দয়া করে কিছুক্ষণ পর আবার চেষ্টা করুন। ($lastError)";
   }
+}
 
 
   void _togglePauseResume(DownloadTask task) {
