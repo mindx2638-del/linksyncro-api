@@ -3,10 +3,9 @@ import 'package:http/http.dart' as http;
 import 'dart:async';
 
 class FacebookService {
-  // আপনার ১০টি রেন্ডার অ্যাকাউন্টের লিঙ্ক এখানে সিরিয়ালি বসাবেন
   final List<String> _apiBaseUrls = [
-    "https://linksyncro-api-8itj.onrender.com",
-    "https://linksyncro-api.onrender.com",
+    "https://linksyncro-api-production.up.railway.app", // Railway (Primary)
+    "https://linksyncro-api.onrender.com",             // Render (Backup)
   ];
 
   static const String _apiKey = "demo_key_123"; 
@@ -21,8 +20,6 @@ class FacebookService {
   Future<Map<String, String>> getVideoDetails(String url) async {
     String targetUrl = url.trim();
     String? lastErrorMessage;
-
-    // লুপটি প্রতিটি সার্ভার লিঙ্ক চেক করবে
     for (String baseUrl in _apiBaseUrls) {
       try {
         final uri = Uri.parse("$baseUrl/get_media?url=${Uri.encodeComponent(targetUrl)}");
@@ -33,9 +30,8 @@ class FacebookService {
             "x-api-key": _apiKey,
             "Accept": "application/json",
           },
-        ).timeout(const Duration(seconds: 40)); // রেন্ডার মাঝে মাঝে সময় নিতে পারে তাই ৪০ সেকেন্ড দিলাম
+        ).timeout(const Duration(seconds: 35));
 
-        // যদি এই সার্ভারটি ঠিক থাকে (Status 200)
         if (response.statusCode == 200) {
           final data = jsonDecode(response.body);
           
@@ -47,28 +43,24 @@ class FacebookService {
               'source': data['source']?.toString() ?? "Facebook",
             };
           } else {
-            // যদি এপিআই থেকে এরর আসে, পরের সার্ভার ট্রাই করবে
             lastErrorMessage = data['message'];
             continue; 
           }
-        } 
-        // যদি সার্ভার ডাউন থাকে (যেমন ১০০ GB শেষ হয়ে গেলে ৫-৩ বা ৪-৪ এরর দিবে)
-        else {
-          lastErrorMessage = "Server error: ${response.statusCode}";
-          continue; // পরের লিঙ্কে চলে যাবে
+        } else if (response.statusCode == 401) {
+          throw "Invalid or unauthorized API Key."; 
+        } else if (response.statusCode == 429) {
+          lastErrorMessage = "Server rate limit exceeded.";
+          continue; 
         }
       } catch (e) {
-        // কানেকশন ফেল করলে বা টাইম আউট হলে পরের সার্ভার ট্রাই করবে
         if (e is TimeoutException) {
-          lastErrorMessage = "Request timed out on this server.";
+          lastErrorMessage = "Server request timed out.";
         } else {
           lastErrorMessage = e.toString();
         }
-        continue; // অটোমেটিক পরের রেন্ডার লিঙ্কে চলে যাবে
+        continue; 
       }
     }
-    
-    // যদি সব সার্ভারই ফেল করে, তখন এই এররটি দেখাবে
-    throw "সবগুলো সার্ভার এই মুহূর্তে বিজি অথবা লিমিট শেষ। কিছুক্ষণ পর চেষ্টা করুন।";
+    throw lastErrorMessage ?? "Unable to connect to servers. Please ensure the link is public.";
   }
 }
