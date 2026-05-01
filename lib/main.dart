@@ -262,51 +262,46 @@ Future<void> _executeDownload(DownloadTask task) async {
 }
 
   Future<Map<String, dynamic>> _resolveLink(String input) async {
-    if (_ytService.isYouTubeLink(input)) return await _ytService.getVideoDetails(input);
-    if (_fbService.isFacebookLink(input)) return await _fbService.getVideoDetails(input);
-    if (_igService.isInstagramLink(input)) return await _igService.getVideoDetails(input);
+  if (_ytService.isYouTubeLink(input)) return await _ytService.getVideoDetails(input);
+  if (_fbService.isFacebookLink(input)) return await _fbService.getVideoDetails(input);
+  if (_igService.isInstagramLink(input)) return await _igService.getVideoDetails(input);
 
-    // আপনার সব রেন্ডার লিঙ্ক এখানে সিরিয়ালি দিন
-    final List<String> customApiUrls = [
-      "https://linksyncro-api-b08a.onrender.com",
-    ];
+  final List<String> customApiUrls = [
+    
+    "https://linksyncro-api-f1k4.onrender.com/exec",
+  ];
 
-    String? lastError;
+  String? lastError;
 
-    // লুপের মাধ্যমে সব রেন্ডার সার্ভার চেক করা হবে
-    for (String apiUrl in customApiUrls) {
-      try {
-        final uri = Uri.parse("$apiUrl/get_media?url=${Uri.encodeComponent(input)}");
-        final response = await http.get(uri).timeout(const Duration(seconds: 40));
-
-        if (response.statusCode == 200) {
-          return jsonDecode(utf8.decode(response.bodyBytes));
-        } else {
-          lastError = "Server Status: ${response.statusCode}";
-          continue; // এই সার্ভারে সমস্যা হলে পরেরটায় যাবে
-        }
-      } catch (e) {
-        lastError = e.toString();
-        debugPrint("API Attempt Failed on $apiUrl: $e");
-        continue; 
-      }
-    }
-
-    // সব রেন্ডার সার্ভার ফেল করলে শেষে গুগল স্ক্রিপ্ট ট্রাই করবে
+  for (String apiUrl in customApiUrls) {
     try {
-      const String googleScriptUrl = "https://script.google.com/macros/s/AKfycbxsns846mdhcNrberwkvdB12yJ58pVg3yE6b4tbvp6rOWPxdjYvN7xeEDbIfID0_CrqJg/exec";
-      final uri = Uri.parse("$googleScriptUrl?url=${Uri.encodeComponent(input)}");
-      
-      final response = await http.get(uri).timeout(const Duration(seconds: 45));
+      final uri = Uri.parse("$apiUrl?url=${Uri.encodeComponent(input)}");
+      final response = await http.get(uri).timeout(const Duration(seconds: 35));
+
       if (response.statusCode == 200) {
         return jsonDecode(utf8.decode(response.bodyBytes));
-      } else {
-        throw "Status: ${response.statusCode}";
       }
     } catch (e) {
-     throw "সবগুলো সার্ভার এই মুহূর্তে বিজি। কিছুক্ষণ পর চেষ্টা করুন। ($lastError)";
+      lastError = e.toString();
+      debugPrint("Custom API Attempt Failed: $e");
+      continue; 
     }
   }
+
+  try {
+    const String googleScriptUrl = "https://script.google.com/macros/s/AKfycbxsns846mdhcNrberwkvdB12yJ58pVg3yE6b4tbvp6rOWPxdjYvN7xeEDbIfID0_CrqJg/exec";
+    final uri = Uri.parse("$googleScriptUrl?url=${Uri.encodeComponent(input)}");
+    
+    final response = await http.get(uri).timeout(const Duration(seconds: 45));
+    if (response.statusCode == 200) {
+      return jsonDecode(utf8.decode(response.bodyBytes));
+    } else {
+      throw "Status: ${response.statusCode}";
+    }
+  } catch (e) {
+   throw "Servers are busy. Please try again later. ($lastError)";
+  }
+}
 
   void _togglePauseResume(DownloadTask task) {
     if (task.isPaused) {

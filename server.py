@@ -33,8 +33,6 @@ CACHE_TTL = 1200
 RATE_LIMIT = 50
 RATE_WINDOW = 60
 VALID_API_KEYS = {"demo_key_123", "premium_key_456"}
-SERVER_NAME = os.environ.get("SERVER_NAME", "Unknown-Server")
-
 
 # Android এবং iOS সাপোর্ট নিশ্চিত করতে আধুনিক মোবাইল ইউজার এজেন্ট
 USER_AGENTS = [
@@ -148,8 +146,7 @@ def extract_media(url: str):
                         "title": info.get("title", "Video"),
                         "thumbnail": info.get("thumbnail"),
                         "duration": info.get("duration"),
-                        "source": info.get("extractor_key", domain),
-                          "server": SERVER_NAME  
+                        "source": info.get("extractor_key", domain)
                     }
                     
                     # Redis এ রেজাল্ট সেভ করা
@@ -211,5 +208,6 @@ async def get_media(url: str, request: Request):
 # -----------------------------
 if __name__ == "__main__":
     import uvicorn
-    port = int(os.environ.get("PORT", 8000))
+    import os
+    port = int(os.environ.get("PORT", 8080)) 
     uvicorn.run(app, host="0.0.0.0", port=port)
