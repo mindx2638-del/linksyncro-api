@@ -5,7 +5,9 @@ import 'dart:async';
 class InstagramService {
   // ১. একাধিক রেন্ডার সার্ভার লিঙ্কের লিস্ট
   final List<String> _apiUrls = [
-    "https://linksyncro-api-1.onrender.com/get_media",
+    
+    "https://linksyncro-api-b08a.onrender.com/get_media",
+    "https://linksyncro-api-f1k4.onrender.com/get_media",
   
   ];
   
