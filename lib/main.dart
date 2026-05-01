@@ -262,32 +262,46 @@ Future<void> _executeDownload(DownloadTask task) async {
 }
 
   Future<Map<String, dynamic>> _resolveLink(String input) async {
+  // ১. নির্দিষ্ট সার্ভিসের জন্য চেক (আগের মতোই)
   if (_ytService.isYouTubeLink(input)) return await _ytService.getVideoDetails(input);
   if (_fbService.isFacebookLink(input)) return await _fbService.getVideoDetails(input);
   if (_igService.isInstagramLink(input)) return await _igService.getVideoDetails(input);
 
+  // ২. আপনার সব রেন্ডার/রেলওয়ে অ্যাকাউন্টের এপিআই লিঙ্ক এখানে বসান
   final List<String> customApiUrls = [
-    "https://linksyncro-api-production.up.railway.app/exec",
-    "https://linksyncro-api.onrender.com/exec",
+    
+    "https://linksyncro-api.onrender.com/get_media",           // Render Acc 1
+    "https://linksyncro-api-8itj.onrender.com/get_media",           // Render Acc 2
   ];
 
   String? lastError;
 
+  // ৩. লুপের মাধ্যমে প্রতিটি সার্ভার চেক করা
   for (String apiUrl in customApiUrls) {
     try {
       final uri = Uri.parse("$apiUrl?url=${Uri.encodeComponent(input)}");
-      final response = await http.get(uri).timeout(const Duration(seconds: 35));
+      
+      // আপনার পাইথন সার্ভারে API Key থাকলে এখানে Headers এ সেটি পাঠিয়ে দিন
+      final response = await http.get(
+        uri, 
+        headers: {"x-api-key": "demo_key_123"} // পাইথন কোডের VALID_API_KEYS এর সাথে মিল রাখুন
+      ).timeout(const Duration(seconds: 35));
 
       if (response.statusCode == 200) {
+        // যদি সফল হয়, ডাটা রিটার্ন করবে এবং লুপ এখানেই থেমে যাবে
         return jsonDecode(utf8.decode(response.bodyBytes));
+      } else {
+        debugPrint("Server $apiUrl returned: ${response.statusCode}");
       }
     } catch (e) {
       lastError = e.toString();
-      debugPrint("Custom API Attempt Failed: $e");
+      debugPrint("Attempt Failed for $apiUrl: $e");
+      // লুপ পরের লিঙ্কে চলে যাবে
       continue; 
     }
   }
 
+  // ৪. যদি ওপরের কোনো সার্ভার কাজ না করে, তবে গুগল স্ক্রিপ্টে ট্রাই করবে
   try {
     const String googleScriptUrl = "https://script.google.com/macros/s/AKfycbxsns846mdhcNrberwkvdB12yJ58pVg3yE6b4tbvp6rOWPxdjYvN7xeEDbIfID0_CrqJg/exec";
     final uri = Uri.parse("$googleScriptUrl?url=${Uri.encodeComponent(input)}");
@@ -299,9 +313,11 @@ Future<void> _executeDownload(DownloadTask task) async {
       throw "Status: ${response.statusCode}";
     }
   } catch (e) {
-   throw "Servers are busy. Please try again later. ($lastError)";
+    // সব সার্ভার ফেইল করলে ইউজারকে এই মেসেজ দেখাবে
+    throw "All servers are currently busy. Please try again after 5 minutes. ($lastError)";
   }
 }
+
 
   void _togglePauseResume(DownloadTask task) {
     if (task.isPaused) {
