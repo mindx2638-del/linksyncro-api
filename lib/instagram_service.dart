@@ -6,9 +6,13 @@ import 'package:flutter/foundation.dart'; // debugPrint ব্যবহারে
 class InstagramService {
   // আপনার এপিআই সার্ভার লিস্ট
   final List<String> _apiBaseUrls = [
-    "https://linksyncro-api-f1k4.onrender.com",
-    "https://linksyncro-api-1.onrender.com",       
-    "https://linksyncro-api-b08a.onrender.com",
+
+    "https://linksyncro-api-1.onrender.com",       //mindx2638
+    "https://linksyncro-api-f1k4.onrender.com",    //linksyncrono 1 
+    "https://linksyncro-api-b08a.onrender.com",    //linksyncrono 2
+    "https://linksyncro-api-vmm6.onrender.com",    //linksyncro 3
+    "https://linksyncro-api-cdll.onrender.com",    //linksyncro 4
+    
   ];
 
   static const String _apiKey = "demo_key_123"; 

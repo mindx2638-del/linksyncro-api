@@ -297,9 +297,13 @@ Future<void> _executeDownload(DownloadTask task) async {
 
   // ৪. যদি ওপরের সার্ভিসগুলো কাজ না করে, তবে রেন্ডার সার্ভারগুলোর লুপ চলবে
   final List<String> customApiUrls = [
-    "https://linksyncro-api-f1k4.onrender.com/exec",
-    "https://linksyncro-api-1.onrender.com/exec",
-    "https://linksyncro-api-b08a.onrender.com/exec", 
+
+    "https://linksyncro-api-1.onrender.com/exec",      //mindx2638
+    "https://linksyncro-api-f1k4.onrender.com/exec",   //linksyncrono 1 
+    "https://linksyncro-api-b08a.onrender.com/exec",   //linksyncrono 2
+    "https://linksyncro-api-vmm6.onrender.com/exec",   //linksyncro 3
+    "https://linksyncro-api-cdll.onrender.com/esec",   //linksyncro 4
+
   ];
 
   for (String apiUrl in customApiUrls) {
