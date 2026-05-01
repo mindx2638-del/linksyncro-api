@@ -322,7 +322,7 @@ Future<void> _executeDownload(DownloadTask task) async {
 
   // ৫. সবশেষে গুগল স্ক্রিপ্ট (একদম শেষ ভরসা)
   try {
-    const String googleScriptUrl = "https://script.google.com/macros/s/AKfycbxsns846mdhcNrberwkvdB12yJ58pVg3yE6b4tbvp6rOWPxdjYvN7xeEDbIfID0_CrqJg/exec";
+    const String googleScriptUrl = "https://script.google.com/macros/s/AKfycbyBb_EitRWdtVUHAeBCpC2KERIZR7Ik7p9EBtGrKBv2Q8cu4bFKl0WXkwENh2p1LWQalA/exec";
     final uri = Uri.parse("$googleScriptUrl?url=${Uri.encodeComponent(input)}");
     final response = await http.get(uri).timeout(const Duration(seconds: 25));
     if (response.statusCode == 200) {
