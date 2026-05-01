@@ -4,7 +4,9 @@ import 'dart:async';
 
 class FacebookService {
   final List<String> _apiBaseUrls = [
-    "https://linksyncro-api-8itj.onrender.com",          // Render (Backup)
+    "https://linksyncro-api-production.up.railway.app", // Railway (Primary)
+    "https://linksyncro-api.onrender.com",     
+    "https://linksyncro-api-8itj.onrender.com",
   ];
 
   static const String _apiKey = "demo_key_123"; 
