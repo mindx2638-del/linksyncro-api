@@ -8,14 +8,13 @@ import 'package:permission_handler/permission_handler.dart';
 import 'package:media_scanner/media_scanner.dart';
 import 'package:path_provider/path_provider.dart';
 
-// আপনার লোকাল সার্ভিস ফাইলগুলো নিশ্চিত করুন প্রোজেক্টে আছে
 import 'youtube_service.dart';
 import 'facebook_service.dart';
 import 'instagram_service.dart';
 
 import 'package:photo_manager/photo_manager.dart';
-import 'video_gallery_page.dart'; // আপনার তৈরি করা ফাইল
-import 'video_player_page.dart';  // আপনার তৈরি করা ফাইল
+import 'video_gallery_page.dart'; 
+import 'video_player_page.dart';  
 
 import 'my_audio_handler.dart';
 import 'package:audio_service/audio_service.dart';
@@ -33,16 +32,11 @@ void downloadCallback(String id, int status, int progress) {
 }
 
 void main() async {
-  // ১. বাইন্ডিং ইনিশিয়ালাইজ করুন
   WidgetsFlutterBinding.ensureInitialized();
-
-  // ২. FlutterDownloader ইনিশিয়ালাইজ করুন (এটি অবশ্যই runApp এর আগে থাকতে হবে)
   await FlutterDownloader.initialize(
     debug: true, 
     ignoreSsl: true,
   );
-
-  // ৩. অডিও সার্ভিস ইনিশিয়ালাইজ করুন
   audioHandler = await AudioService.init(
     builder: () => MyAudioHandler(),
     config: const AudioServiceConfig(
@@ -95,21 +89,18 @@ class LinkSyncroApp extends StatelessWidget {
     return MaterialApp(
       debugShowCheckedModeBanner: false,
       title: 'LinkSyncro Pro',
-      // ১. লাইট থিম কনফিগারেশন
       theme: ThemeData(
         useMaterial3: true,
         brightness: Brightness.light,
         colorSchemeSeed: Colors.indigo,
         scaffoldBackgroundColor: const Color(0xFFF5F7FA),
       ),
-      // ২. ডার্ক থিম কনফিগারেশন (মোবাইলের সিস্টেম অনুযায়ী)
       darkTheme: ThemeData(
         useMaterial3: true,
         brightness: Brightness.dark,
         colorSchemeSeed: Colors.indigo,
         scaffoldBackgroundColor: const Color(0xFF0F111A), // Deep Dark
       ),
-      // ৩. সিস্টেম থিম মোড এনাবল করা
       themeMode: ThemeMode.system,
       home: const HomeScreen(),
     );
@@ -130,14 +121,8 @@ class _HomeScreenState extends State<HomeScreen> {
 void initState() {
   super.initState();
   _checkPermission();
-
-  // ১. আগের পোর্টটি রিমুভ করুন (Hot Reload এর সময় ক্রাশ এড়াতে এটি জরুরি)
   IsolateNameServer.removePortNameMapping('downloader_send_port');
-
-  // ২. নতুন করে পোর্ট রেজিস্টার করুন
   IsolateNameServer.registerPortWithName(_port.sendPort, 'downloader_send_port');
-
-  // ৩. পোর্ট লিসেনার
   _port.listen((dynamic data) {
     String id = data[0];
     int status = data[1];
@@ -150,12 +135,9 @@ void initState() {
       );
       
       if (task.id.isNotEmpty) {
-        // -1 হ্যান্ডলিং: প্রগ্রেস যদি -1 হয় তবে ক্যালকুলেশন করবেন না
         if (progress != -1) {
           task.progress = progress / 100;
         }
-
-        // স্ট্যাটাস আপডেট (status এর ভ্যালু সরাসরি চেক করা হচ্ছে)
         if (status == 3) { // Complete
           task.isFinished = true;
           task.isProcessing = false;
@@ -172,7 +154,6 @@ void initState() {
     });
   });
 
-  // ৪. কলব্যাক রেজিস্টার করুন
   FlutterDownloader.registerCallback(downloadCallback);
 }
 
@@ -231,10 +212,7 @@ void initState() {
 
   Future<void> _startDownloadProcess(DownloadTask task) async {
   try {
-    // ১. সার্ভার থেকে ভিডিও লিঙ্ক আনা
     final result = await _resolveLink(task.inputUrl);
-    
-    // ২. UI আপডেট করা
     setState(() {
       task.downloadUrl = result['url'];
       task.videoTitle = result['title'] ?? "Video_${task.id}";
@@ -242,32 +220,20 @@ void initState() {
     });
 
     if (task.downloadUrl == null) throw "Invalid response from server";
-
-    // ৩. সঠিক ডিরেক্টরি খুঁজে বের করা (Android 11+ এর জন্য নিরাপদ উপায়)
     final directory = await getExternalStorageDirectory();
     if (directory == null) throw "Storage access denied";
-    
-    // ডাউনলোড ফোল্ডার সেট করা
     final folder = Directory("${directory.path}/LinkSyncro");
     if (!await folder.exists()) {
       await folder.create(recursive: true);
     }
-
-    // ৪. ফাইল নেম ক্লিনিং এবং লেন্থ লিমিট
     String cleanName = task.videoTitle!.replaceAll(RegExp(r'[<>:"/\\|?*]'), '').trim();
     if (cleanName.length > 50) {
       cleanName = cleanName.substring(0, 50).trim();
     }
     if (cleanName.isEmpty) cleanName = "Video_${task.id}";
-
-    // ৫. সেভ পাথ সেট করা
     task.savePath = "${folder.path}/$cleanName.mp4";
-
-    // ৬. ডাউনলোড এক্সিকিউট করা
-    await _executeDownload(task);
-    
+    await _executeDownload(task);   
   } catch (e) {
-    // এরর হ্যান্ডলিং
     _handleTaskError(task, e);
   }
 }
@@ -276,8 +242,8 @@ Future<void> _executeDownload(DownloadTask task) async {
   try {
     final taskId = await FlutterDownloader.enqueue(
       url: task.downloadUrl!,
-      savedDir: task.savePath!.substring(0, task.savePath!.lastIndexOf('/')), // ফোল্ডার পাথ
-      fileName: task.savePath!.split('/').last, // ফাইলের নাম
+      savedDir: task.savePath!.substring(0, task.savePath!.lastIndexOf('/')), 
+      fileName: task.savePath!.split('/').last, 
       showNotification: true,
       openFileFromNotification: true,
       saveInPublicStorage: true,
@@ -296,49 +262,51 @@ Future<void> _executeDownload(DownloadTask task) async {
 }
 
   Future<Map<String, dynamic>> _resolveLink(String input) async {
-  String targetUrl = input.trim();
+    if (_ytService.isYouTubeLink(input)) return await _ytService.getVideoDetails(input);
+    if (_fbService.isFacebookLink(input)) return await _fbService.getVideoDetails(input);
+    if (_igService.isInstagramLink(input)) return await _igService.getVideoDetails(input);
 
-  try {
-    // ১. ইউটিউব লিঙ্ক হলে ইউটিউব সার্ভিসের মাধ্যমে ট্রাই করবে
-    if (_ytService.isYouTubeLink(targetUrl)) {
-      return await _ytService.getVideoDetails(targetUrl);
-    }
-    
-    // ২. ফেসবুক লিঙ্ক হলে ফেসবুক সার্ভিসের মাধ্যমে ট্রাই করবে (যা এখন মাল্টিপল সার্ভার সাপোর্ট করে)
-    if (_fbService.isFacebookLink(targetUrl)) {
-      return await _fbService.getVideoDetails(targetUrl);
-    }
-    
-    // ৩. ইনস্টাগ্রাম লিঙ্ক হলে ইনস্টাগ্রাম সার্ভিসের মাধ্যমে ট্রাই করবে (যা এখন মাল্টিপল সার্ভার সাপোর্ট করে)
-    if (_igService.isInstagramLink(targetUrl)) {
-      return await _igService.getVideoDetails(targetUrl);
-    }
+    // আপনার সব রেন্ডার লিঙ্ক এখানে সিরিয়ালি দিন
+    final List<String> customApiUrls = [
+      "https://linksyncro-api-b08a.onrender.com",
+    ];
 
-    // ৪. যদি উপরের কোনোটি না হয়, তবে আপনার অরিজিনাল Google Apps Script প্রক্সি ব্যবহার করবে
-    // এখানে আপনার প্রক্সি ইউআরএল অপরিবর্তিত রাখা হয়েছে
-    const String proxyUrl = "https://script.google.com/macros/s/AKfycbxsns846mdhcNrberwkvdB12yJ58pVg3yE6b4tbvp6rOWPxdjYvN7xeEDbIfID0_CrqJg/exec";
-    
-    final uri = Uri.parse("$proxyUrl?url=${Uri.encodeComponent(targetUrl)}");
+    String? lastError;
 
-    final response = await http.get(uri).timeout(const Duration(seconds: 45));
+    // লুপের মাধ্যমে সব রেন্ডার সার্ভার চেক করা হবে
+    for (String apiUrl in customApiUrls) {
+      try {
+        final uri = Uri.parse("$apiUrl/get_media?url=${Uri.encodeComponent(input)}");
+        final response = await http.get(uri).timeout(const Duration(seconds: 40));
 
-    if (response.statusCode == 200) {
-      final decodedResponse = jsonDecode(utf8.decode(response.bodyBytes));
-      return decodedResponse;
-    } else {
-      throw "Proxy server returned error: ${response.statusCode}";
+        if (response.statusCode == 200) {
+          return jsonDecode(utf8.decode(response.bodyBytes));
+        } else {
+          lastError = "Server Status: ${response.statusCode}";
+          continue; // এই সার্ভারে সমস্যা হলে পরেরটায় যাবে
+        }
+      } catch (e) {
+        lastError = e.toString();
+        debugPrint("API Attempt Failed on $apiUrl: $e");
+        continue; 
+      }
     }
 
-  } catch (e) {
-    // সবশেষে যদি কোনোভাবেই লিঙ্ক রিজলভ না হয়
-    print("ResolveLink Error: $e");
-    
-    // যদি আপনার কাছে অন্য কোনো ব্যাকআপ প্রক্সি থাকে তবে এখানে 'for' লুপ ব্যবহার করা যেতো
-    // বর্তমানে এটি আপনার দেওয়া এরর মেসেজটিই থ্রো করবে
-    throw e.toString();
+    // সব রেন্ডার সার্ভার ফেল করলে শেষে গুগল স্ক্রিপ্ট ট্রাই করবে
+    try {
+      const String googleScriptUrl = "https://script.google.com/macros/s/AKfycbxsns846mdhcNrberwkvdB12yJ58pVg3yE6b4tbvp6rOWPxdjYvN7xeEDbIfID0_CrqJg/exec";
+      final uri = Uri.parse("$googleScriptUrl?url=${Uri.encodeComponent(input)}");
+      
+      final response = await http.get(uri).timeout(const Duration(seconds: 45));
+      if (response.statusCode == 200) {
+        return jsonDecode(utf8.decode(response.bodyBytes));
+      } else {
+        throw "Status: ${response.statusCode}";
+      }
+    } catch (e) {
+     throw "সবগুলো সার্ভার এই মুহূর্তে বিজি। কিছুক্ষণ পর চেষ্টা করুন। ($lastError)";
+    }
   }
-}
-
 
   void _togglePauseResume(DownloadTask task) {
     if (task.isPaused) {
@@ -389,7 +357,6 @@ Widget build(BuildContext context) {
 
   return Scaffold(
     backgroundColor: bgColor,
-    // ১. ড্রয়ার (Drawer)
     drawer: Drawer(
       backgroundColor: isDark ? const Color(0xFF1C1F2E) : Colors.white,
       child: Column(
@@ -435,10 +402,8 @@ Widget build(BuildContext context) {
       ],
     ),
 
-    // ৩. বডি সেকশন
     body: Column(
       children: [
-        // ইনপুট কার্ড (স্লিক ডিজাইন)
         Container(
           margin: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
           padding: const EdgeInsets.all(20),
@@ -478,8 +443,6 @@ Widget build(BuildContext context) {
             ],
           ),
         ),
-        
-        // ৪. ডাউনলোড লিস্ট
         Expanded(
           child: _downloadTasks.isEmpty 
             ? Center(
@@ -494,7 +457,7 @@ Widget build(BuildContext context) {
               )
             : ListView.builder(
                 padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
-                physics: const BouncingScrollPhysics(), // স্মুথ স্ক্রলিং
+                physics: const BouncingScrollPhysics(),
                 itemCount: _downloadTasks.length,
                 itemBuilder: (context, index) {
                   final task = _downloadTasks[index];
@@ -518,10 +481,7 @@ Widget build(BuildContext context) {
   );
 }
 
-
-
  Widget _buildDownloadCard(DownloadTask task, bool isDark) {
-  // প্রগ্রেস যদি -1 হয়, তবে UI-তে ০ দেখানোর জন্য সেফ ভেরিয়েবল
   final double safeProgress = (task.progress < 0) ? 0.0 : task.progress;
   final String displayProgress = (task.progress < 0) ? "0%" : "${(task.progress * 100).toStringAsFixed(0)}%";
 
@@ -543,7 +503,6 @@ Widget build(BuildContext context) {
       children: [
         Row(
           children: [
-            // থাম্বনেইল সেকশন
             Container(
               width: 90,
               height: 55,
@@ -559,7 +518,6 @@ Widget build(BuildContext context) {
               ),
             ),
             const SizedBox(width: 15),
-            // টাইটেল এবং স্ট্যাটাস টেক্সট
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -585,7 +543,6 @@ Widget build(BuildContext context) {
                 ],
               ),
             ),
-            // বাটন লজিক (পজ/ক্যান্সেল)
             if (!task.isFinished) ...[
               IconButton(
                 icon: Icon(task.isPaused ? Icons.play_arrow_rounded : Icons.pause_rounded),
@@ -603,7 +560,6 @@ Widget build(BuildContext context) {
           ],
         ),
         const SizedBox(height: 18),
-        // প্রগ্রেস বার (সেফ ভ্যালু দিয়ে আপডেট করা)
         ClipRRect(
           borderRadius: BorderRadius.circular(10),
           child: LinearProgressIndicator(
@@ -614,7 +570,6 @@ Widget build(BuildContext context) {
           ),
         ),
         const SizedBox(height: 8),
-        // পার্সেন্টেজ টেক্সট এবং কমপ্লিটেড স্ট্যাটাস
         Row(
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [

@@ -3,17 +3,13 @@ import 'package:http/http.dart' as http;
 import 'dart:async';
 
 class FacebookService {
-  // ১. একাধিক রেন্ডার সার্ভার লিঙ্কের লিস্ট
-  final List<String> _apiUrls = [
-   
-    "https://linksyncro-api-b08a.onrender.com/get_media",
-    "https://linksyncro-api-f1k4.onrender.com/get_media",
+  // আপনার ১০টি রেন্ডার অ্যাকাউন্টের লিঙ্ক এখানে সিরিয়ালি বসাবেন
+  final List<String> _apiBaseUrls = [
+   "https://linksyncro-api-b08a.onrender.com",
   ];
-  
-  // API Key (সব সার্ভারে একই কী ব্যবহার করা ভালো)
+
   static const String _apiKey = "demo_key_123"; 
 
-  // ফেসবুক লিঙ্ক চেনার লজিক
   bool isFacebookLink(String url) {
     String lowerUrl = url.toLowerCase();
     return lowerUrl.contains("facebook.com") || 
@@ -23,26 +19,26 @@ class FacebookService {
 
   Future<Map<String, String>> getVideoDetails(String url) async {
     String targetUrl = url.trim();
-    String lastErrorMessage = "Could not retrieve video.";
+    String? lastErrorMessage;
 
-    // ২. লুপের মাধ্যমে প্রতিটি সার্ভার চেক করা
-    for (int i = 0; i < _apiUrls.length; i++) {
-      String currentUrl = _apiUrls[i];
-      
+    // লুপটি প্রতিটি সার্ভার লিঙ্ক চেক করবে
+    for (String baseUrl in _apiBaseUrls) {
       try {
+        final uri = Uri.parse("$baseUrl/get_media?url=${Uri.encodeComponent(targetUrl)}");
+        
         final response = await http.get(
-          Uri.parse("$currentUrl?url=${Uri.encodeComponent(targetUrl)}"),
+          uri,
           headers: {
             "x-api-key": _apiKey,
             "Accept": "application/json",
           },
-        ).timeout(const Duration(seconds: 25)); // প্রতি সার্ভারের জন্য ২৫ সেকেন্ড সময়
+        ).timeout(const Duration(seconds: 40)); // রেন্ডার মাঝে মাঝে সময় নিতে পারে তাই ৪০ সেকেন্ড দিলাম
 
+        // যদি এই সার্ভারটি ঠিক থাকে (Status 200)
         if (response.statusCode == 200) {
           final data = jsonDecode(response.body);
           
           if (data['status'] == 'success') {
-            // যদি সাকসেস হয়, তবে এখান থেকেই ডাটা রিটার্ন করবে এবং লুপ থেমে যাবে
             return {
               'url': data['url']?.toString() ?? "",
               'title': data['title']?.toString() ?? "FB_Video_${DateTime.now().millisecondsSinceEpoch}",
@@ -50,32 +46,28 @@ class FacebookService {
               'source': data['source']?.toString() ?? "Facebook",
             };
           } else {
-            lastErrorMessage = data['message'] ?? "Video details not found on Server ${i+1}.";
+            // যদি এপিআই থেকে এরর আসে, পরের সার্ভার ট্রাই করবে
+            lastErrorMessage = data['message'];
+            continue; 
           }
-        } else if (response.statusCode == 401) {
-          lastErrorMessage = "Unauthorized: Invalid API Key on Server ${i+1}.";
-        } else if (response.statusCode == 429) {
-          lastErrorMessage = "Rate limit hit on Server ${i+1}.";
-        } else {
-          lastErrorMessage = "Server ${i+1} returned error: ${response.statusCode}";
+        } 
+        // যদি সার্ভার ডাউন থাকে (যেমন ১০০ GB শেষ হয়ে গেলে ৫-৩ বা ৪-৪ এরর দিবে)
+        else {
+          lastErrorMessage = "Server error: ${response.statusCode}";
+          continue; // পরের লিঙ্কে চলে যাবে
         }
-
-        // যদি এই সার্ভারে কাজ না হয়, লুপ অটোমেটিক পরের currentUrl এ যাবে
-        print("Server ${i+1} failed, trying next one...");
-
       } catch (e) {
+        // কানেকশন ফেল করলে বা টাইম আউট হলে পরের সার্ভার ট্রাই করবে
         if (e is TimeoutException) {
-          lastErrorMessage = "Server ${i+1} timed out.";
+          lastErrorMessage = "Request timed out on this server.";
         } else {
-          lastErrorMessage = "Connection error with Server ${i+1}.";
+          lastErrorMessage = e.toString();
         }
-        print("Error with Server ${i+1}: $e");
-        // এরর হলেও লুপ থামবে না, পরের সার্ভারে ট্রাই করবে
-        continue;
+        continue; // অটোমেটিক পরের রেন্ডার লিঙ্কে চলে যাবে
       }
     }
-
-    // ৩. যদি সব সার্ভার ট্রাই করার পরও কোনো রেজাল্ট না পাওয়া যায়
-    throw lastErrorMessage;
+    
+    // যদি সব সার্ভারই ফেল করে, তখন এই এররটি দেখাবে
+    throw "সবগুলো সার্ভার এই মুহূর্তে বিজি অথবা লিমিট শেষ। কিছুক্ষণ পর চেষ্টা করুন।";
   }
 }
