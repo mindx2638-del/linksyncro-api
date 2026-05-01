@@ -5,7 +5,8 @@ import 'dart:async';
 class InstagramService {
  
   final List<String> _apiBaseUrls = [
-    "https://linksyncro-api-f1k4.onrender.com",             // Render (Backup)
+    "https://linksyncro-api-f1k4.onrender.com",
+    "https://linksyncro-api-1.onrender.com",             // Render (Backup)
   ];
 
   static const String _apiKey = "demo_key_123"; 

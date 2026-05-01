@@ -269,6 +269,7 @@ Future<void> _executeDownload(DownloadTask task) async {
   final List<String> customApiUrls = [
     
     "https://linksyncro-api-f1k4.onrender.com/exec",
+    "https://linksyncro-api-1.onrender.com/exec",
   ];
 
   String? lastError;
