@@ -5,21 +5,55 @@ import 'dart:async';
 class FacebookService {
   final List<String> _apiBaseUrls = [
     "https://linksyncro-api-f1k4.onrender.com", 
-    "https://linksyncro-api-1.onrender.com",           // Render (Backup)
+    "https://linksyncro-api-1.onrender.com",
+    "https://linksyncro-api-b08a.onrender.com",
   ];
 
   static const String _apiKey = "demo_key_123"; 
 
+  // সব ধরণের ফেসবুক ডোমেইন চেক করার লজিক
   bool isFacebookLink(String url) {
     String lowerUrl = url.toLowerCase();
     return lowerUrl.contains("facebook.com") || 
            lowerUrl.contains("fb.watch") || 
-           lowerUrl.contains("fb.com");
+           lowerUrl.contains("fb.com") ||
+           lowerUrl.contains("web.facebook.com");
+  }
+
+  // শেয়ারিং লিংক থেকে আসল ভিডিও লিংক বের করার ফাংশন
+  Future<String> _resolveRedirects(String url) async {
+    try {
+      final client = http.Client();
+      final request = http.Request('GET', Uri.parse(url))
+        ..followRedirects = false; // আমরা ম্যানুয়ালি চেক করব
+      
+      final response = await client.send(request).timeout(const Duration(seconds: 5));
+      
+      if (response.statusCode == 301 || response.statusCode == 302) {
+        final location = response.headers['location'];
+        if (location != null) return location;
+      }
+      return url;
+    } catch (e) {
+      return url; // কোনো সমস্যা হলে মূল ইউআরএল ব্যবহার করবে
+    }
   }
 
   Future<Map<String, String>> getVideoDetails(String url) async {
     String targetUrl = url.trim();
+
+    // ১. শেয়ারিং লিংকের আসল রূপ বের করা
+    if (targetUrl.contains("facebook.com/share")) {
+      targetUrl = await _resolveRedirects(targetUrl);
+    }
+
+    // ২. লিংকের ট্র্যাকিং প্যারামিটার মুছে ফেলা (পরিষ্কার করা)
+    if (targetUrl.contains("?")) {
+      targetUrl = targetUrl.split("?")[0];
+    }
+
     String? lastErrorMessage;
+
     for (String baseUrl in _apiBaseUrls) {
       try {
         final uri = Uri.parse("$baseUrl/get_media?url=${Uri.encodeComponent(targetUrl)}");
