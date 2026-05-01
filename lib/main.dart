@@ -262,12 +262,13 @@ Future<void> _executeDownload(DownloadTask task) async {
 }
 
   Future<Map<String, dynamic>> _resolveLink(String input) async {
+  // ১. নির্দিষ্ট সার্ভিস চেক
   if (_ytService.isYouTubeLink(input)) return await _ytService.getVideoDetails(input);
   if (_fbService.isFacebookLink(input)) return await _fbService.getVideoDetails(input);
   if (_igService.isInstagramLink(input)) return await _igService.getVideoDetails(input);
 
+  // ২. কাস্টম এপিআই লিস্ট
   final List<String> customApiUrls = [
-    
     "https://linksyncro-api-f1k4.onrender.com/exec",
     "https://linksyncro-api-1.onrender.com/exec",
     "https://linksyncro-api-b08a.onrender.com/exec", 
@@ -275,34 +276,43 @@ Future<void> _executeDownload(DownloadTask task) async {
 
   String? lastError;
 
+  // ৩. রেন্ডার সার্ভার লুপ (ফেইলওভার লজিক)
   for (String apiUrl in customApiUrls) {
     try {
       final uri = Uri.parse("$apiUrl?url=${Uri.encodeComponent(input)}");
-      final response = await http.get(uri).timeout(const Duration(seconds: 35));
+      
+      // টাইমআউট কমিয়ে ১২ সেকেন্ড করা হয়েছে যাতে বন্ধ সার্ভারে অ্যাপ আটকে না থাকে
+      final response = await http.get(uri).timeout(const Duration(seconds: 12));
 
       if (response.statusCode == 200) {
         return jsonDecode(utf8.decode(response.bodyBytes));
+      } else {
+        lastError = "Server Status: ${response.statusCode}";
+        debugPrint("API $apiUrl failed with status: ${response.statusCode}");
+        continue; // স্ট্যাটাস ২০০ না হলে পরের লিংকে যাবে
       }
     } catch (e) {
       lastError = e.toString();
-      debugPrint("Custom API Attempt Failed: $e");
-      continue; 
+      debugPrint("Connection to $apiUrl failed: $e");
+      continue; // কানেকশন এরর বা সাস্পেন্ড থাকলে পরের লিংকে যাবে
     }
   }
 
+  // ৪. যদি ওপরের সব সার্ভার ফেল করে, তবে গুগল স্ক্রিপ্ট ট্রাই করবে
   try {
     const String googleScriptUrl = "https://script.google.com/macros/s/AKfycbxsns846mdhcNrberwkvdB12yJ58pVg3yE6b4tbvp6rOWPxdjYvN7xeEDbIfID0_CrqJg/exec";
     final uri = Uri.parse("$googleScriptUrl?url=${Uri.encodeComponent(input)}");
     
-    final response = await http.get(uri).timeout(const Duration(seconds: 45));
+    final response = await http.get(uri).timeout(const Duration(seconds: 30));
     if (response.statusCode == 200) {
       return jsonDecode(utf8.decode(response.bodyBytes));
-    } else {
-      throw "Status: ${response.statusCode}";
     }
   } catch (e) {
-   throw "Servers are busy. Please try again later. ($lastError)";
+    lastError = "Google Script failed: $e";
   }
+
+  // ৫. সব লজিক শেষ হওয়ার পর যদি ডাটা না আসে
+  throw "Servers are busy or suspended. Please try again later. ($lastError)";
 }
 
   void _togglePauseResume(DownloadTask task) {
