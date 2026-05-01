@@ -296,19 +296,48 @@ Future<void> _executeDownload(DownloadTask task) async {
 }
 
   Future<Map<String, dynamic>> _resolveLink(String input) async {
-    if (_ytService.isYouTubeLink(input)) return await _ytService.getVideoDetails(input);
-    if (_fbService.isFacebookLink(input)) return await _fbService.getVideoDetails(input);
-    if (_igService.isInstagramLink(input)) return await _igService.getVideoDetails(input);
+  String targetUrl = input.trim();
 
+  try {
+    // ১. ইউটিউব লিঙ্ক হলে ইউটিউব সার্ভিসের মাধ্যমে ট্রাই করবে
+    if (_ytService.isYouTubeLink(targetUrl)) {
+      return await _ytService.getVideoDetails(targetUrl);
+    }
+    
+    // ২. ফেসবুক লিঙ্ক হলে ফেসবুক সার্ভিসের মাধ্যমে ট্রাই করবে (যা এখন মাল্টিপল সার্ভার সাপোর্ট করে)
+    if (_fbService.isFacebookLink(targetUrl)) {
+      return await _fbService.getVideoDetails(targetUrl);
+    }
+    
+    // ৩. ইনস্টাগ্রাম লিঙ্ক হলে ইনস্টাগ্রাম সার্ভিসের মাধ্যমে ট্রাই করবে (যা এখন মাল্টিপল সার্ভার সাপোর্ট করে)
+    if (_igService.isInstagramLink(targetUrl)) {
+      return await _igService.getVideoDetails(targetUrl);
+    }
+
+    // ৪. যদি উপরের কোনোটি না হয়, তবে আপনার অরিজিনাল Google Apps Script প্রক্সি ব্যবহার করবে
+    // এখানে আপনার প্রক্সি ইউআরএল অপরিবর্তিত রাখা হয়েছে
     const String proxyUrl = "https://script.google.com/macros/s/AKfycbxsns846mdhcNrberwkvdB12yJ58pVg3yE6b4tbvp6rOWPxdjYvN7xeEDbIfID0_CrqJg/exec";
-    final uri = Uri.parse("$proxyUrl?url=${Uri.encodeComponent(input)}");
+    
+    final uri = Uri.parse("$proxyUrl?url=${Uri.encodeComponent(targetUrl)}");
 
     final response = await http.get(uri).timeout(const Duration(seconds: 45));
+
     if (response.statusCode == 200) {
-      return jsonDecode(utf8.decode(response.bodyBytes));
+      final decodedResponse = jsonDecode(utf8.decode(response.bodyBytes));
+      return decodedResponse;
+    } else {
+      throw "Proxy server returned error: ${response.statusCode}";
     }
-    throw "Proxy server failed to respond";
+
+  } catch (e) {
+    // সবশেষে যদি কোনোভাবেই লিঙ্ক রিজলভ না হয়
+    print("ResolveLink Error: $e");
+    
+    // যদি আপনার কাছে অন্য কোনো ব্যাকআপ প্রক্সি থাকে তবে এখানে 'for' লুপ ব্যবহার করা যেতো
+    // বর্তমানে এটি আপনার দেওয়া এরর মেসেজটিই থ্রো করবে
+    throw e.toString();
   }
+}
 
 
   void _togglePauseResume(DownloadTask task) {

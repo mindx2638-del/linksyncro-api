@@ -33,6 +33,8 @@ CACHE_TTL = 1200
 RATE_LIMIT = 50
 RATE_WINDOW = 60
 VALID_API_KEYS = {"demo_key_123", "premium_key_456"}
+SERVER_NAME = os.environ.get("SERVER_NAME", "Unknown-Server")
+
 
 # Android এবং iOS সাপোর্ট নিশ্চিত করতে আধুনিক মোবাইল ইউজার এজেন্ট
 USER_AGENTS = [
@@ -146,7 +148,8 @@ def extract_media(url: str):
                         "title": info.get("title", "Video"),
                         "thumbnail": info.get("thumbnail"),
                         "duration": info.get("duration"),
-                        "source": info.get("extractor_key", domain)
+                        "source": info.get("extractor_key", domain),
+                          "server": SERVER_NAME  
                     }
                     
                     # Redis এ রেজাল্ট সেভ করা
