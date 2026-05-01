@@ -262,57 +262,78 @@ Future<void> _executeDownload(DownloadTask task) async {
 }
 
   Future<Map<String, dynamic>> _resolveLink(String input) async {
-  // ১. নির্দিষ্ট সার্ভিস চেক
-  if (_ytService.isYouTubeLink(input)) return await _ytService.getVideoDetails(input);
-  if (_fbService.isFacebookLink(input)) return await _fbService.getVideoDetails(input);
-  if (_igService.isInstagramLink(input)) return await _igService.getVideoDetails(input);
+  String? lastError;
 
-  // ২. কাস্টম এপিআই লিস্ট
+  // ১. ইউটিউব চেক (আলাদা try-catch যাতে এটি ফেল করলে ফেসবুক বা রেন্ডার সার্ভার কাজ করে)
+  if (_ytService.isYouTubeLink(input)) {
+    try {
+      return await _ytService.getVideoDetails(input);
+    } catch (e) {
+      lastError = e.toString();
+      debugPrint("YouTube Service Failed: $e");
+    }
+  }
+
+  // ২. ফেসবুক চেক
+  if (_fbService.isFacebookLink(input)) {
+    try {
+      return await _fbService.getVideoDetails(input);
+    } catch (e) {
+      lastError = e.toString();
+      debugPrint("Facebook Service Failed: $e");
+      // এখানে stop না করে নিচে রেন্ডার সার্ভারগুলো ট্রাই করবে
+    }
+  }
+
+  // ৩. ইন্সটাগ্রাম চেক
+  if (_igService.isInstagramLink(input)) {
+    try {
+      return await _igService.getVideoDetails(input);
+    } catch (e) {
+      lastError = e.toString();
+      debugPrint("Instagram Service Failed: $e");
+    }
+  }
+
+  // ৪. যদি ওপরের সার্ভিসগুলো কাজ না করে, তবে রেন্ডার সার্ভারগুলোর লুপ চলবে
   final List<String> customApiUrls = [
     "https://linksyncro-api-f1k4.onrender.com/exec",
     "https://linksyncro-api-1.onrender.com/exec",
     "https://linksyncro-api-b08a.onrender.com/exec", 
   ];
 
-  String? lastError;
-
-  // ৩. রেন্ডার সার্ভার লুপ (ফেইলওভার লজিক)
   for (String apiUrl in customApiUrls) {
     try {
+      debugPrint("Trying Render Server: $apiUrl");
       final uri = Uri.parse("$apiUrl?url=${Uri.encodeComponent(input)}");
       
-      // টাইমআউট কমিয়ে ১২ সেকেন্ড করা হয়েছে যাতে বন্ধ সার্ভারে অ্যাপ আটকে না থাকে
-      final response = await http.get(uri).timeout(const Duration(seconds: 12));
+      // টাইমআউট কমিয়ে ১০ সেকেন্ড করুন, যাতে বন্ধ সার্ভারে বসে না থাকে
+      final response = await http.get(uri).timeout(const Duration(seconds: 10));
 
       if (response.statusCode == 200) {
         return jsonDecode(utf8.decode(response.bodyBytes));
-      } else {
-        lastError = "Server Status: ${response.statusCode}";
-        debugPrint("API $apiUrl failed with status: ${response.statusCode}");
-        continue; // স্ট্যাটাস ২০০ না হলে পরের লিংকে যাবে
       }
     } catch (e) {
       lastError = e.toString();
-      debugPrint("Connection to $apiUrl failed: $e");
-      continue; // কানেকশন এরর বা সাস্পেন্ড থাকলে পরের লিংকে যাবে
+      debugPrint("Render Server $apiUrl Failed: $e");
+      continue; // এরর হলেও পরের লিংকে যাবে
     }
   }
 
-  // ৪. যদি ওপরের সব সার্ভার ফেল করে, তবে গুগল স্ক্রিপ্ট ট্রাই করবে
+  // ৫. সবশেষে গুগল স্ক্রিপ্ট (একদম শেষ ভরসা)
   try {
     const String googleScriptUrl = "https://script.google.com/macros/s/AKfycbxsns846mdhcNrberwkvdB12yJ58pVg3yE6b4tbvp6rOWPxdjYvN7xeEDbIfID0_CrqJg/exec";
     final uri = Uri.parse("$googleScriptUrl?url=${Uri.encodeComponent(input)}");
-    
-    final response = await http.get(uri).timeout(const Duration(seconds: 30));
+    final response = await http.get(uri).timeout(const Duration(seconds: 25));
     if (response.statusCode == 200) {
       return jsonDecode(utf8.decode(response.bodyBytes));
     }
   } catch (e) {
-    lastError = "Google Script failed: $e";
+    lastError = e.toString();
   }
 
-  // ৫. সব লজিক শেষ হওয়ার পর যদি ডাটা না আসে
-  throw "Servers are busy or suspended. Please try again later. ($lastError)";
+  // যদি কোনো কিছুই কাজ না করে
+  throw "All servers are currently unavailable. ($lastError)";
 }
 
   void _togglePauseResume(DownloadTask task) {
