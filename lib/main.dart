@@ -267,7 +267,7 @@ Future<void> _executeDownload(DownloadTask task) async {
   if (_igService.isInstagramLink(input)) return await _igService.getVideoDetails(input);
 
   final List<String> customApiUrls = [
-      "https://linksyncro-api-8itj.onrender.com/exec",
+      "https://linksyncro-api-8itj.onrender.com/get_media",
   ];
 
   String? lastError;
