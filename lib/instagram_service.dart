@@ -6,7 +6,7 @@ class InstagramService {
  
   final List<String> _apiBaseUrls = [
     "https://linksyncro-api-production.up.railway.app", // Railway (Primary)
-    "https://linksyncro-api.onrender.com",             // Render (Backup)
+    "https://linksyncro-api-1.onrender.com",             // Render (Backup)
   ];
 
   static const String _apiKey = "demo_key_123"; 
