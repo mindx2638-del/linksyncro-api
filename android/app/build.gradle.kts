@@ -16,7 +16,7 @@ if (keystorePropertiesFile.exists()) {
 
 android {
     namespace = "com.shaon.linksyncro"
-    compileSdk = 36 // এখানে ৩৬ করা হয়েছে (প্লাগিনের রিকোয়েস্ট অনুযায়ী)
+    compileSdk = 36 
     ndkVersion = "27.0.12077973"
 
     compileOptions {
@@ -31,17 +31,18 @@ android {
     defaultConfig {
         applicationId = "com.shaon.linksyncro"
         minSdk = 24
-        targetSdk = 36 // এখানেও ৩৬ করা হয়েছে
+        targetSdk = 36 
         versionCode = flutter.versionCode
         versionName = flutter.versionName
+
+        // FFmpeg এবং বড় অ্যাপের জন্য এটি অত্যন্ত জরুরি
+        multiDexEnabled = true 
     }
 
     signingConfigs {
-        // ডিবাগ কনফিগ - 'storeFile' লাইনটি সরানো হয়েছে যাতে ফাইল খুঁজে না পাওয়ার এরর না দেয়
         getByName("debug") {
             // ডিফল্ট ডিবাগ কি ব্যবহার হবে
         }
-        // রিলিজ কনফিগ
         create("release") {
             keyAlias = keystoreProperties.getProperty("keyAlias")
             keyPassword = keystoreProperties.getProperty("keyPassword")
@@ -64,10 +65,19 @@ android {
             signingConfig = signingConfigs.getByName("debug")
         }
     }
+
+    // বিভিন্ন লাইব্রেরির মধ্যে কনফ্লিক্ট এড়ানোর জন্য
+    packaging {
+        resources {
+            excludes += "/META-INF/{AL2.0,LGPL2.1}"
+        }
+    }
 }
 
 dependencies {
     implementation("androidx.work:work-runtime:2.9.1")
+    // মাল্টিডেক্স সাপোর্ট নিশ্চিত করার জন্য
+    implementation("androidx.multidex:multidex:2.0.1")
 }
 
 flutter {

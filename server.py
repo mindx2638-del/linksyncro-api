@@ -88,10 +88,10 @@ def get_cookie_files(domain):
 # CORE ENGINE
 # -----------------------------
 def extract_media(url: str):
-    # Redis Cache Key তৈরি
+    # ১. Redis Cache Key তৈরি
     cache_key = hashlib.md5(url.encode()).hexdigest()
     
-    # Redis থেকে ডেটা চেক করা
+    # ২. Redis থেকে ডেটা চেক করা
     cached_data = get_cache(cache_key)
     if cached_data:
         logging.info(f"Cache Hit: {url}")
@@ -103,7 +103,9 @@ def extract_media(url: str):
 
     for cookie_path in cookie_list:
         ydl_opts = {
-            "format": "best[height<=1440]/best",
+            # সেরা ভিডিও এবং সেরা অডিও মার্জ করার অপশন এবং রেজোলিউশন প্রায়োরিটি
+            "format": "bestvideo+bestaudio/best",
+            "format_sort": ["res:1080", "ext:mp4:m4a"], 
             "quiet": True,
             "no_warnings": True,
             "noplaylist": True,
@@ -128,28 +130,46 @@ def extract_media(url: str):
         try:
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 info = ydl.extract_info(url, download=False)
-                download_url = info.get("url")
+                formats = info.get('formats', [])
+                
+                # ৩. উন্নত ফরম্যাট ফিল্টারিং লজিক (হাই কোয়ালিটির জন্য)
+                
+                # ৩.১ সরাসরি কম্বাইন্ড ইউআরএল (ভিডিও + অডিও একসাথে)
+                combined = [f for f in formats if f.get('vcodec') != 'none' and f.get('acodec') != 'none']
+                if combined:
+                    combined.sort(key=lambda x: (x.get("height") or 0), reverse=True)
+                    download_url = combined[0]['url']
+                else:
+                    download_url = info.get("url")
 
-                # ফরম্যাট সিলেকশন লজিক
-                if not download_url and "formats" in info:
-                    valid_formats = [f for f in info["formats"] if f.get("vcodec") != "none" and f.get("acodec") != "none"]
-                    if not valid_formats:
-                        valid_formats = [f for f in info["formats"] if f.get("url")]
-                    if valid_formats:
-                        valid_formats.sort(key=lambda x: (x.get("height") or 0), reverse=True)
-                        download_url = valid_formats[0]["url"]
+                # ৩.২ সেরা ভিডিও ইউআরএল (১০৮০p+, কিন্তু শব্দ নেই)
+                video_only = [f for f in formats if f.get('vcodec') != 'none' and f.get('acodec') == 'none']
+                video_only_url = None
+                if video_only:
+                    video_only.sort(key=lambda x: (x.get("height") or 0), reverse=True)
+                    video_only_url = video_only[0]['url']
+                
+                # ৩.৩ সেরা অডিও ইউআরএল (High Bitrate Audio)
+                audio_only = [f for f in formats if f.get('acodec') != 'none' and f.get('vcodec') == 'none']
+                audio_only_url = None
+                if audio_only:
+                    audio_only.sort(key=lambda x: (x.get("abr") or 0), reverse=True)
+                    audio_only_url = audio_only[0]['url']
 
-                if download_url:
+                # ৪. ফাইনাল রেজাল্ট প্রিপারেশন
+                if download_url or (video_only_url and audio_only_url):
                     result = {
                         "status": "success",
-                        "url": download_url,
+                        "url": download_url,           # নরমাল বা কম্বাইন্ড ইউআরএল
+                        "video_url": video_only_url,    # হাই কোয়ালিটি ভিডিও (মার্জ করার জন্য)
+                        "audio_url": audio_only_url,    # হাই কোয়ালিটি অডিও (মার্জ করার জন্য)
                         "title": info.get("title", "Video"),
                         "thumbnail": info.get("thumbnail"),
                         "duration": info.get("duration"),
                         "source": info.get("extractor_key", domain)
                     }
                     
-                    # Redis এ রেজাল্ট সেভ করা
+                    # ৫. Redis এ সেভ করা
                     set_cache(cache_key, result, ttl=3600)
                     return result
 
@@ -161,6 +181,7 @@ def extract_media(url: str):
             continue
             
     return None
+
 
 # -----------------------------
 # ROUTES
