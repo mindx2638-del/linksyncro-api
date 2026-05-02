@@ -8,9 +8,6 @@ import 'package:permission_handler/permission_handler.dart';
 import 'package:media_scanner/media_scanner.dart';
 import 'package:path_provider/path_provider.dart';
 
-import 'package:ffmpeg_kit_flutter_new/ffmpeg_kit.dart';
-import 'package:ffmpeg_kit_flutter_new/return_code.dart';
-
 import 'youtube_service.dart';
 import 'facebook_service.dart';
 import 'instagram_service.dart';
@@ -61,15 +58,12 @@ class DownloadTask {
   String? videoTitle;
   String? thumbnailUrl;
   String? downloadUrl;
-  String? videoUrlOnly;
-  String? audioUrlOnly;
   String? savePath;
   double progress;
   String statusText;
   bool isProcessing;
   bool isPaused;
   bool isFinished;
-  bool isHighQuality;
 
 
   DownloadTask({
@@ -78,15 +72,12 @@ class DownloadTask {
     this.videoTitle,
     this.thumbnailUrl,
     this.downloadUrl,
-    this.videoUrlOnly, // এটি যোগ করুন
-    this.audioUrlOnly, // এটি যোগ করুন
     this.savePath,
     this.progress = 0,
     this.statusText = "Analyzing...",
     this.isProcessing = true,
     this.isPaused = false,
     this.isFinished = false,
-    this.isHighQuality = false, 
   });
 }
 
@@ -126,164 +117,48 @@ class HomeScreen extends StatefulWidget {
 class _HomeScreenState extends State<HomeScreen> {
 
    final ReceivePort _port = ReceivePort();
-   @override
 
-@override
+   String _selectedQuality = "720"; 
+   String _selectedType = "video";
+
+   @override
 void initState() {
   super.initState();
   _checkPermission();
-  
-  // ১. আইসোলেট পোর্ট সেটআপ (পুরানো ম্যাপিং থাকলে রিমুভ করে নতুন করে সেট করা)
   IsolateNameServer.removePortNameMapping('downloader_send_port');
   IsolateNameServer.registerPortWithName(_port.sendPort, 'downloader_send_port');
-  
-  // ২. ডাউনলোডার লিসেনার
   _port.listen((dynamic data) {
     String id = data[0];
-    int status = data[1]; // ৩ = Success, ৪ = Failed, ২ = Running
+    int status = data[1];
     int progress = data[2];
 
     setState(() {
-      // বর্তমান লিস্ট থেকে আইডি অনুযায়ী টাস্কটি খুঁজে বের করা
       final task = _downloadTasks.firstWhere(
         (t) => t.id == id, 
         orElse: () => DownloadTask(id: "", inputUrl: "")
       );
       
       if (task.id.isNotEmpty) {
-        // প্রগ্রেস আপডেট (প্রসেসিং স্টেজে ১.০ রাখার জন্য চেক)
-        if (progress != -1 && !task.statusText.contains("Merging")) {
+        if (progress != -1) {
           task.progress = progress / 100;
         }
-
-        // ৩. স্ট্যাটাস অনুযায়ী স্মার্ট লজিক
-        if (status == 3) { // ডাউনলোড সফল (Success)
-          
-          if (task.isHighQuality) {
-            // ৩.১ হাই কোয়ালিটি লজিক: ভিডিও শেষ হলে অডিও ধরবে, অডিও শেষ হলে মার্জ করবে
-            if (task.statusText.contains("Video")) {
-              task.statusText = "Downloading Audio (HQ)...";
-              _downloadHQAudio(task); // অডিও ডাউনলোড শুরু করার ফাংশন
-            } 
-            else if (task.statusText.contains("Audio")) {
-              task.statusText = "Merging Crystal Clear Video...";
-              task.isProcessing = true;
-              task.progress = 0.9; // মার্জ হওয়ার সময় প্রগ্রেস আটকে রাখা
-              _mergeHQFiles(task); // FFmpeg মার্জ কল
-            }
-          } 
-          else {
-            // ৩.২ সাধারণ ভিডিওর জন্য সরাসরি ফিনিশ
-            task.isFinished = true;
-            task.isProcessing = false;
-            task.progress = 1.0;
-            task.statusText = "Saved to Gallery";
-          }
-          
-        } else if (status == 4) { // ডাউনলোড ফেইলড
+        if (status == 3) { // Complete
+          task.isFinished = true;
+          task.isProcessing = false;
+          task.statusText = "Saved to Gallery";
+        } else if (status == 4) { // Failed
           task.statusText = "Download Failed";
           task.isProcessing = false;
-          task.isPaused = false;
-        } else if (status == 2) { // ডাউনলোড চলছে (Running)
-          if (!task.statusText.contains("Merging")) {
-             task.statusText = task.isHighQuality 
-                 ? (task.statusText.contains("Audio") ? "Downloading Audio (HQ)..." : "Downloading Video (HQ)...")
-                 : "Downloading...";
-          }
-        } else if (status == 0 || status == 1) { // কিউতে আছে
-          task.statusText = "Waiting in queue...";
+        } else if (status == 2) { // Running
+          task.statusText = "Downloading...";
+        } else if (status == 0) { // Enqueued/Waiting
+          task.statusText = "Waiting...";
         }
       }
     });
   });
 
   FlutterDownloader.registerCallback(downloadCallback);
-}
-
-
-@override
-void dispose() {
-  IsolateNameServer.removePortNameMapping('downloader_send_port');
-  _urlController.dispose();
-  _port.close(); // পোর্ট বন্ধ করা
-  super.dispose();
-}
-
-Future<void> _executeHQDownload(DownloadTask task) async {
-  try {
-    final saveDir = task.savePath!.substring(0, task.savePath!.lastIndexOf('/'));
-    
-    // প্রথমে শুধু ভিডিও ডাউনলোড হবে
-    final vTaskId = await FlutterDownloader.enqueue(
-      url: task.videoUrlOnly!,
-      savedDir: saveDir,
-      fileName: "temp_v_${task.id}.mp4",
-      showNotification: true,
-      saveInPublicStorage: false,
-    );
-
-    if (vTaskId != null) {
-      setState(() {
-        task.id = vTaskId; // ভিডিওর আইডি সেট হলো
-        task.statusText = "Downloading Video (HQ)...";
-      });
-    }
-  } catch (e) {
-    _handleTaskError(task, "HQ Video download failed");
-  }
-}
-
-// ২. অডিও ডাউনলোডের দ্বিতীয় ধাপ
-Future<void> _downloadHQAudio(DownloadTask task) async {
-  try {
-    final saveDir = task.savePath!.substring(0, task.savePath!.lastIndexOf('/'));
-    final aTaskId = await FlutterDownloader.enqueue(
-      url: task.audioUrlOnly!,
-      savedDir: saveDir,
-      fileName: "temp_a_${task.id}.mp3",
-      showNotification: false, // অডিওর জন্য আলাদা নোটিফিকেশন দরকার নেই
-      saveInPublicStorage: false,
-    );
-
-    if (aTaskId != null) {
-      setState(() {
-        task.id = aTaskId; // এখন অডিও আইডি ট্র্যাক হবে
-        task.statusText = "Downloading Audio (HQ)...";
-      });
-    }
-  } catch (e) {
-    _handleTaskError(task, "HQ Audio download failed");
-  }
-}
-
-// ৩. মার্জ করার কমান্ড (একটু আপডেট করা হয়েছে কোয়ালিটি ঠিক রাখতে)
-Future<void> _mergeHQFiles(DownloadTask task) async {
-  final saveDir = task.savePath!.substring(0, task.savePath!.lastIndexOf('/'));
-  final videoFile = "$saveDir/temp_v_${task.id}.mp4";
-  final audioFile = "$saveDir/temp_a_${task.id}.mp3";
-  final finalFile = task.savePath!;
-
-  // কমান্ড: -c copy দিলে কোয়ালিটি একদম অরিজিনাল থাকে এবং দ্রুত হয়
-  final command = "-i $videoFile -i $audioFile -c copy -map 0:v:0 -map 1:a:0 -y $finalFile";
-
-  await FFmpegKit.execute(command).then((session) async {
-    final returnCode = await session.getReturnCode();
-    
-    if (ReturnCode.isSuccess(returnCode)) {
-      if (await File(videoFile).exists()) await File(videoFile).delete();
-      if (await File(audioFile).exists()) await File(audioFile).delete();
-
-      setState(() {
-        task.isFinished = true;
-        task.isProcessing = false;
-        task.statusText = "Saved: 1080p Crystal Clear";
-        task.progress = 1.0;
-      });
-      MediaScanner.loadMedia(path: finalFile);
-    } else {
-      _handleTaskError(task, "FFmpeg Merge Failed");
-    }
-  });
 }
 
 
@@ -341,69 +216,31 @@ Future<void> _mergeHQFiles(DownloadTask task) async {
 
   Future<void> _startDownloadProcess(DownloadTask task) async {
   try {
-    // ১. সার্ভার থেকে লিঙ্ক রেজলভ করা
     final result = await _resolveLink(task.inputUrl);
-    
     setState(() {
+      task.downloadUrl = result['url'];
       task.videoTitle = result['title'] ?? "Video_${task.id}";
       task.thumbnailUrl = result['thumbnail'];
-      
-      // ব্যাকএন্ড থেকে আসা কী-গুলোর নাম পাইথন কোডের সাথে মিল রেখে চেক করা
-      if (result['video_url'] != null && result['audio_url'] != null) {
-        task.videoUrlOnly = result['video_url'];
-        task.audioUrlOnly = result['audio_url'];
-        task.isHighQuality = true;
-        task.downloadUrl = null; 
-        task.statusText = "Downloading Video (HQ)..."; // এটি খুবই গুরুত্বপূর্ণ
-      } else {
-        // Fallback: যদি আলাদা লিঙ্ক না থাকে
-        task.downloadUrl = result['url'] ?? result['video_url'];
-        task.isHighQuality = false;
-        task.statusText = "Starting download...";
-      }
     });
 
-    // ২. বৈধতা চেক
-    if (task.downloadUrl == null && !task.isHighQuality) {
-      throw "Could not find a valid download link.";
-    }
-
-    // ৩. স্টোরেজ ডিরেক্টরি সেটআপ
+    if (task.downloadUrl == null) throw "Invalid response from server";
     final directory = await getExternalStorageDirectory();
-    if (directory == null) throw "Could not access storage directory.";
-    
+    if (directory == null) throw "Storage access denied";
     final folder = Directory("${directory.path}/LinkSyncro");
     if (!await folder.exists()) {
       await folder.create(recursive: true);
     }
-
-    // ৪. ফাইল নেম ক্লিনিং
     String cleanName = task.videoTitle!.replaceAll(RegExp(r'[<>:"/\\|?*]'), '').trim();
     if (cleanName.length > 50) {
       cleanName = cleanName.substring(0, 50).trim();
     }
-    if (cleanName.isEmpty) {
-      cleanName = "Video_${DateTime.now().millisecondsSinceEpoch}";
-    }
-    
-    // ৫. ফাইনাল সেভ পাথ সেট করা
+    if (cleanName.isEmpty) cleanName = "Video_${task.id}";
     task.savePath = "${folder.path}/$cleanName.mp4";
-
-    // ৬. ডাউনলোডের ধরণ অনুযায়ী মেথড কল করা
-    if (task.isHighQuality) {
-      // হাই কোয়ালিটি: এখানে আমরা ভিডিও ডাউনলোড দিয়ে শুরু করব
-      await _executeHQDownload(task); 
-    } else {
-      // সাধারণ ডাউনলোড (ভিডিও+অডিও এক ফাইলে)
-      await _executeDownload(task);
-    }
-
+    await _executeDownload(task);   
   } catch (e) {
-    debugPrint("StartDownload Error: $e");
-    _handleTaskError(task, e.toString());
+    _handleTaskError(task, e);
   }
 }
-
 
 Future<void> _executeDownload(DownloadTask task) async {
   try {
@@ -464,9 +301,13 @@ Future<void> _executeDownload(DownloadTask task) async {
 
   // ৪. যদি ওপরের সার্ভিসগুলো কাজ না করে, তবে রেন্ডার সার্ভারগুলোর লুপ চলবে
   final List<String> customApiUrls = [
-    "https://linksyncro-api-f1k4.onrender.com/exec",
-    "https://linksyncro-api-1.onrender.com/exec",
-    "https://linksyncro-api-b08a.onrender.com/exec", 
+
+    "https://linksyncro-api-1.onrender.com/exec",      //mindx2638
+    "https://linksyncro-api-f1k4.onrender.com/exec",   //linksyncrono 1 
+    "https://linksyncro-api-b08a.onrender.com/exec",   //linksyncrono 2
+    "https://linksyncro-api-vmm6.onrender.com/exec",   //linksyncro 3
+    "https://linksyncro-api-cdll.onrender.com/esec",   //linksyncro 4
+
   ];
 
   for (String apiUrl in customApiUrls) {
@@ -713,6 +554,46 @@ Widget build(BuildContext context) {
               ),
             ),
             const SizedBox(width: 15),
+
+            Expanded(
+      child: DropdownButtonFormField<String>(
+        value: _selectedQuality,
+        decoration: InputDecoration(
+          labelText: "Quality",
+          filled: true,
+          fillColor: isDark ? Colors.white.withOpacity(0.05) : Colors.grey[100],
+          border: OutlineInputBorder(borderRadius: BorderRadius.circular(15), borderSide: BorderSide.none),
+        ),
+        items: ["360", "480", "720", "1080", "1440", "2160"]
+            .map((q) => DropdownMenuItem(
+                value: q, 
+                child: Text(q == "1440" ? "2K" : q == "2160" ? "4K" : "${q}p")
+            )).toList(),
+        onChanged: (val) => setState(() => _selectedQuality = val!),
+      ),
+    ),
+    const SizedBox(width: 10),
+    // ফরম্যাট সিলেক্টর (Video/Audio)
+    Expanded(
+      child: DropdownButtonFormField<String>(
+        value: _selectedType,
+        decoration: InputDecoration(
+          labelText: "Format",
+          filled: true,
+          fillColor: isDark ? Colors.white.withOpacity(0.05) : Colors.grey[100],
+          border: OutlineInputBorder(borderRadius: BorderRadius.circular(15), borderSide: BorderSide.none),
+        ),
+        items: const [
+          DropdownMenuItem(value: "video", child: Text("Video")),
+          DropdownMenuItem(value: "audio", child: Text("Audio")),
+        ],
+        onChanged: (val) => setState(() => _selectedType = val!),
+      ),
+    ),
+  ],
+),
+const SizedBox(height: 15), 
+
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -780,4 +661,4 @@ Widget build(BuildContext context) {
     ),
   );
 }
-}
+}s
