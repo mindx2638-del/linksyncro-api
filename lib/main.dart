@@ -117,10 +117,6 @@ class HomeScreen extends StatefulWidget {
 class _HomeScreenState extends State<HomeScreen> {
 
    final ReceivePort _port = ReceivePort();
-
-   String _selectedQuality = "720"; 
-   String _selectedType = "video";
-
    @override
 void initState() {
   super.initState();
@@ -554,46 +550,6 @@ Widget build(BuildContext context) {
               ),
             ),
             const SizedBox(width: 15),
-
-            Expanded(
-      child: DropdownButtonFormField<String>(
-        value: _selectedQuality,
-        decoration: InputDecoration(
-          labelText: "Quality",
-          filled: true,
-          fillColor: isDark ? Colors.white.withOpacity(0.05) : Colors.grey[100],
-          border: OutlineInputBorder(borderRadius: BorderRadius.circular(15), borderSide: BorderSide.none),
-        ),
-        items: ["360", "480", "720", "1080", "1440", "2160"]
-            .map((q) => DropdownMenuItem(
-                value: q, 
-                child: Text(q == "1440" ? "2K" : q == "2160" ? "4K" : "${q}p")
-            )).toList(),
-        onChanged: (val) => setState(() => _selectedQuality = val!),
-      ),
-    ),
-    const SizedBox(width: 10),
-    // ফরম্যাট সিলেক্টর (Video/Audio)
-    Expanded(
-      child: DropdownButtonFormField<String>(
-        value: _selectedType,
-        decoration: InputDecoration(
-          labelText: "Format",
-          filled: true,
-          fillColor: isDark ? Colors.white.withOpacity(0.05) : Colors.grey[100],
-          border: OutlineInputBorder(borderRadius: BorderRadius.circular(15), borderSide: BorderSide.none),
-        ),
-        items: const [
-          DropdownMenuItem(value: "video", child: Text("Video")),
-          DropdownMenuItem(value: "audio", child: Text("Audio")),
-        ],
-        onChanged: (val) => setState(() => _selectedType = val!),
-      ),
-    ),
-  ],
-),
-const SizedBox(height: 15), 
-
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -661,4 +617,4 @@ const SizedBox(height: 15),
     ),
   );
 }
-}s
+}
