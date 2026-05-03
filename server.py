@@ -113,10 +113,17 @@ def extract_media(url: str):
             "geo_bypass": True,
             "user_agent": random.choice(USER_AGENTS),
             "extractor_args": {
-                "youtube": {"player_client": ["android", "ios", "mweb", "tv"], "player_skip": ["webpage", "configs"]},
-                "instagram": {"force_subtitles": False},
-                "facebook": {"force_generic_extractor": False}
-            }
+    "youtube": {
+        "player_client": ["android", "ios"], 
+        "player_skip": ["webpage", "configs"],
+    },
+    "instagram": {
+        "force_subtitles": False
+    },
+    "facebook": {
+        "force_generic_extractor": False
+    }
+}
         }
 
         if cookie_path:
