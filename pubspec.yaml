@@ -29,5 +29,6 @@ dependencies:
   flutter_downloader: ^1.12.0
   ffmpeg_kit_flutter_new: ^4.1.0
 
+
 flutter:
   uses-material-design: true

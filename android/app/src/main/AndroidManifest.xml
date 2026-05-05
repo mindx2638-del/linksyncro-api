@@ -22,6 +22,9 @@
         android:name="${applicationName}"
         android:label="LinkSyncro Pro"
         android:icon="@mipmap/ic_launcher"
+        android:requestLegacyExternalStorage="true"
+    android:preserveLegacyExternalStorage="true"
+
         android:allowBackup="true"
         android:supportsRtl="true"
         android:usesCleartextTraffic="true"
