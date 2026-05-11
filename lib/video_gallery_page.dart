@@ -1,271 +1,436 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:photo_manager/photo_manager.dart';
+import 'package:photo_manager_image_provider/photo_manager_image_provider.dart'; // এই ইমপোর্টটি নিশ্চিত করুন
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:media_kit/media_kit.dart';
 import 'video_player_page.dart';
+import 'video_delete.dart'; 
+import 'package:drag_select_grid_view/drag_select_grid_view.dart';
+import 'dart:math'; 
 
-// --- Shared Preferences Helper Logic ---
+
+// --- Shared Preferences Helper ---
 class VideoStorage {
   static const String _key = 'watched_videos_list';
+
   static Future<void> markAsWatched(String id) async {
     final prefs = await SharedPreferences.getInstance();
-    List<String> watched = prefs.getStringList(_key) ?? [];
+    final watched = prefs.getStringList(_key) ?? [];
     if (!watched.contains(id)) {
       watched.add(id);
       await prefs.setStringList(_key, watched);
     }
   }
 
-  static Future<List<String>> getWatchedIds() async {
+  static Future<Set<String>> getWatchedIds() async {
     final prefs = await SharedPreferences.getInstance();
-    return prefs.getStringList(_key) ?? [];
+    return (prefs.getStringList(_key) ?? []).toSet();
   }
 }
 
 class VideoGalleryPage extends StatefulWidget {
   const VideoGalleryPage({super.key});
+
   @override
   State<VideoGalleryPage> createState() => _VideoGalleryPageState();
 }
 
 class _VideoGalleryPageState extends State<VideoGalleryPage> {
-  List<AssetPathEntity> _allFolders = [];
-  List<AssetEntity> _allVideosGlobal = [];
-  List<AssetEntity> _filteredVideosGlobal = [];
-  List<String> _watchedIds = [];
+  List<AssetPathEntity> _folders = [];
+  List<AssetEntity> _allVideos = [];
+  List<AssetEntity> _searchResult = [];
+  Set<String> _watchedIds = {};
   bool _isLoading = true;
   bool _isSearching = false;
   final TextEditingController _searchController = TextEditingController();
+  final ScrollController _folderScrollController = ScrollController();
+  final ScrollController _searchScrollController = ScrollController();
+  final dragFolderController = DragSelectGridViewController();
+  final Map<String, String> _folderSizeCache = {};
+
+  
+  Future<String> _getFolderSize(AssetPathEntity folder) async {
+  // ১. চেক করা হবে এই ফোল্ডারের সাইজ আগে একবার বের করা হয়েছে কি না
+  if (_folderSizeCache.containsKey(folder.id)) {
+    return _folderSizeCache[folder.id]!;
+  }
+
+  try {
+    // ফোল্ডারের ভিডিও লিস্ট নেওয়া হচ্ছে (৫০০০ পর্যন্ত)
+    final assets = await folder.getAssetListRange(start: 0, end: 5000);
+    int totalBytes = 0;
+
+    // ২. প্যারালাল প্রসেসিং: সব ফাইলের সাইজ একসাথে চেক হবে (এটি সুপার ফাস্ট)
+    final List<File?> files = await Future.wait(assets.map((asset) => asset.file));
+    
+    for (var file in files) {
+      if (file != null) {
+        totalBytes += await file.length();
+      }
+    }
+
+    if (totalBytes <= 0) return "0 B";
+
+    const suffixes = ["B", "KB", "MB", "GB", "TB", "PB", "EB"];
+    var i = (log(totalBytes) / log(1024)).floor();
+    if (i >= suffixes.length) i = suffixes.length - 1;
+
+    String result = "${(totalBytes / pow(1024, i)).toStringAsFixed(1)} ${suffixes[i]}";
+    
+    // ৩. রেজাল্টটি ক্যাশে সেভ করা হচ্ছে যাতে দ্বিতীয়বার আর ক্যালকুলেট করতে না হয়
+    _folderSizeCache[folder.id] = result;
+    
+    return result;
+  } catch (e) {
+    debugPrint("Error: $e");
+    return "Unknown size";
+  }
+}
+
 
   @override
   void initState() {
     super.initState();
-    _fetchData();
+    MediaKit.ensureInitialized();
+    _initGallery();
+    // লিসেনার যোগ করুন যাতে সিলেকশন করলে টাইটেল আপডেট হয়
+    dragFolderController.addListener(() => setState(() {}));
   }
 
-  Future<void> _fetchData() async {
-  final ps = await PhotoManager.requestPermissionExtend();
-  if (ps.isAuth || ps.hasAccess) {
+  @override
+  void dispose() {
+    _folderScrollController.dispose();
+    _searchController.dispose();
+    _searchScrollController.dispose();
+    dragFolderController.dispose(); // এটি যোগ করুন
+    super.dispose();
+  }
+
+  Future<void> _initGallery() async {
+    final PermissionState ps = await PhotoManager.requestPermissionExtend();
+    if (!ps.isAuth && !ps.hasAccess) {
+      if (mounted) setState(() => _isLoading = false);
+      return;
+    }
+
     final watched = await VideoStorage.getWatchedIds();
     final paths = await PhotoManager.getAssetPathList(type: RequestType.video);
 
-    List<AssetPathEntity> folders = paths.where((path) => !path.isAll).toList();
+    // ফোল্ডার সর্টিং (A-Z)
+    List<AssetPathEntity> folders = paths.where((p) => !p.isAll).toList();
     folders.sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
 
-    final allAssetPath = paths.firstWhere((path) => path.isAll);
-    final allVideos = await allAssetPath.getAssetListRange(start: 0, end: 5000);
-
-    List<AssetEntity> sortedGlobalVideos = List.from(allVideos);
-    sortedGlobalVideos.sort((a, b) {
-      return (a.title ?? "").toLowerCase().compareTo((b.title ?? "").toLowerCase());
-    });
-    // -------------------------
+    // সব ভিডিও লোড (সার্চের জন্য)
+    final allPath = paths.firstWhere((p) => p.isAll, orElse: () => paths.first);
+    List<AssetEntity> allVideos = await allPath.getAssetListRange(start: 0, end: 5000);
+    allVideos.sort((a, b) => (a.title ?? "").toLowerCase().compareTo((b.title ?? "").toLowerCase()));
 
     if (mounted) {
       setState(() {
-        _allFolders = folders;
-        _allVideosGlobal = sortedGlobalVideos; 
+        _folders = folders;
+        _allVideos = allVideos;
         _watchedIds = watched;
         _isLoading = false;
       });
     }
-  } else {
-    if (mounted) setState(() => _isLoading = false);
-  }
   }
 
-  void _searchAllVideos(String query) {
-  setState(() {
-    List<AssetEntity> filteredGlobal = _allVideosGlobal
-        .where((v) => (v.title ?? "").toLowerCase().contains(query.toLowerCase()))
-        .toList();
-    filteredGlobal.sort((a, b) => (a.title ?? "").toLowerCase().compareTo((b.title ?? "").toLowerCase()));
-
-    _filteredVideosGlobal = filteredGlobal;
-  });
+  void _onSearch(String query) {
+    setState(() {
+      _searchResult = _allVideos
+          .where((v) => (v.title ?? "").toLowerCase().contains(query.toLowerCase()))
+          .toList();
+    });
   }
-
- void _playVideoWithList(List<AssetEntity> assetList, int index) async {
-  // ১. স্ক্রিনে একটি লোডিং ইন্ডিকেটর দেখান (পাথ বের করতে ১-২ সেকেন্ড লাগতে পারে)
-  showDialog(
-    context: context,
-    barrierDismissible: false,
-    builder: (context) => const Center(
-      child: CircularProgressIndicator(color: Colors.white),
-    ),
-  );
-
-  try {
-    // ২. ভিডিওটিকে 'Watched' হিসেবে মার্ক করুন
-    await VideoStorage.markAsWatched(assetList[index].id);
-
-    // ৩. সব ভিডিওর ফাইল পাথ (Path) আগেভাগে বের করে নিন
-    // এটি করলে প্লেয়ার পেজে যাওয়ার পর ব্যাক বাটন চাপলে কোনো ল্যাগ হবে না
-    List<File?> files = await Future.wait(
-      assetList.map((v) => v.file).toList()
-    );
-    List<String> paths = files.map((f) => f?.path ?? "").toList();
-
-    if (!mounted) return;
-    
-    // ৪. পাথ লোড হয়ে গেলে লোডিং ডায়ালগটি বন্ধ করুন
-    Navigator.pop(context);
-
-    // ৫. এবার সব ডাটা নিয়ে ভিডিও প্লেয়ার পেজে যান
-    await Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (_) => VideoPlayerPage(
-          videoAssets: assetList,
-          cachedPaths: paths, // ✅ নতুন প্যারামিটারটি এখানে পাস করুন
-          index: index,
-          title: assetList[index].title ?? "Video",
-        ),
-      ),
-    );
-
-    // ৬. প্লেয়ার থেকে ফিরে আসলে ডাটা রিফ্রেশ করুন
-    _fetchData();
-  } catch (e) {
-    if (mounted) Navigator.pop(context);
-    debugPrint("Error loading video paths: $e");
-  }
-}
 
   @override
-Widget build(BuildContext context) {
-  // PopScope ব্যবহার করা হয়েছে যাতে ফোনের ব্যাক বাটন/জেসচার হ্যান্ডেল করা যায়
-  return PopScope(
-    canPop: !_isSearching, // সার্চ না চললে সরাসরি ব্যাক হবে (হোমে যাবে)
-    onPopInvokedWithResult: (didPop, result) {
-      if (didPop) return;
-      if (_isSearching) {
-        setState(() {
-          _isSearching = false;
-          _searchController.clear();
-          _filteredVideosGlobal = [];
-        });
-      }
-    },
-    child: Scaffold(
-      appBar: AppBar(
-        // বাম পাশের ব্যাক আইকন
-        leading: IconButton(
-          icon: const Icon(Icons.arrow_back),
-          onPressed: () {
-            if (_isSearching) {
-              // সার্চ চললে শুধু সার্চ বন্ধ হবে
-              setState(() {
-                _isSearching = false;
-                _searchController.clear();
-                _filteredVideosGlobal = [];
-              });
-            } else {
-              // সার্চ বন্ধ থাকলে আগের পেজে (হোমে) চলে যাবে
-              Navigator.pop(context);
-            }
-          },
-        ),
-        title: _isSearching
-            ? TextField(
-                controller: _searchController,
-                autofocus: true,
-                decoration: const InputDecoration(
-                    hintText: "Search all videos...", border: InputBorder.none),
-                onChanged: _searchAllVideos,
-              )
-            : const Text("Video Gallery"),
-        actions: [
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: const Color(0xFFF8F9FA),
+      appBar: _buildAppBar(),
+      body: _isLoading
+          ? const Center(child: CircularProgressIndicator(strokeWidth: 2))
+          : _isSearching
+              ? _buildVideoGrid(_searchResult)
+              : _buildFolderList(),
+    );
+  }
+
+  PreferredSizeWidget _buildAppBar() {
+    // সিলেকশন মোডে আছে কি না তা চেক করা হচ্ছে
+    final bool isSelecting = dragFolderController.value.isSelecting;
+    final int selectedCount = dragFolderController.value.amount;
+
+    return AppBar(
+      elevation: 0.5,
+      backgroundColor: Colors.white,
+      foregroundColor: Colors.black87,
+      
+      // নতুন লজিক: সার্চ বা সিলেকশন মোডে থাকলে বাম পাশে একটি ব্যাক বাটন আসবে
+      leading: (_isSearching || isSelecting)
+          ? IconButton(
+              icon: const Icon(Icons.arrow_back),
+              onPressed: () {
+                setState(() {
+                  if (isSelecting) {
+                    dragFolderController.value = Selection.empty();
+                  } else if (_isSearching) {
+                    _isSearching = false;
+                    _searchController.clear();
+                    _searchResult = [];
+                  }
+                });
+              },
+            )
+          : null,
+
+      // ১. টাইটেল লজিক: আপনার আগের লজিক হুবহু রাখা হয়েছে
+      title: isSelecting 
+          ? Text("$selectedCount Selected", style: const TextStyle(fontWeight: FontWeight.bold))
+          : (_isSearching
+              ? TextField(
+                  controller: _searchController,
+                  autofocus: true,
+                  decoration: const InputDecoration(
+                    hintText: "Search videos...", 
+                    border: InputBorder.none
+                  ),
+                  onChanged: _onSearch,
+                )
+              : const Text("Video Library", style: TextStyle(fontWeight: FontWeight.bold))),
+      
+      actions: [
+        // ২. অ্যাকশন বাটন লজিক: আপনার আগের লজিক হুবহু রাখা হয়েছে
+        if (isSelecting)
           IconButton(
-            icon: Icon(_isSearching ? Icons.close : Icons.search),
+            icon: const Icon(Icons.close),
             onPressed: () {
               setState(() {
-                _isSearching = !_isSearching;
-                if (!_isSearching) {
-                  _searchController.clear();
-                  _filteredVideosGlobal = [];
-                }
+                dragFolderController.value = Selection.empty();
               });
             },
           )
-        ],
-      ),
-      body: _isLoading
-          ? const Center(child: CircularProgressIndicator())
-          : _isSearching
-              ? _buildGlobalSearchList()
-              : _buildFolderList(),
-    ),
-  );
-}
-
-  Widget _buildFolderList() {
-    return ListView.builder(
-      itemCount: _allFolders.length,
-      itemBuilder: (context, index) {
-        final folder = _allFolders[index];
-        return ListTile(
-          leading: const Icon(Icons.folder, size: 40, color: Colors.amber),
-          title: Text(folder.name),
-          subtitle: FutureBuilder<int>(
-            future: folder.assetCountAsync,
-            builder: (_, s) => Text("${s.data ?? 0} videos"),
-          ),
-          trailing: const Icon(Icons.chevron_right),
-          onTap: () async {
-            await Navigator.push(
-              context,
-              MaterialPageRoute(builder: (_) => FolderDetailsPage(folder: folder)),
-            );
-            _fetchData();
-          },
-        );
-      },
-    );
-  }
-
-  Widget _buildGlobalSearchList() {
-    return ListView.builder(
-      itemCount: _filteredVideosGlobal.length,
-      itemBuilder: (context, index) {
-        final video = _filteredVideosGlobal[index];
-        bool isNew = !_watchedIds.contains(video.id);
-        return ListTile(
-          leading: _buildThumbnail(video, isNew),
-          title: Text(video.title ?? "Video"),
-          onTap: () => _playVideoWithList(_filteredVideosGlobal, index),
-        );
-      },
-    );
-  }
-
-  Widget _buildThumbnail(AssetEntity video, bool isNew) {
-    return Stack(
-      children: [
-        FutureBuilder(
-          future: video.thumbnailDataWithSize(const ThumbnailSize(150, 100)),
-          builder: (_, snap) => snap.hasData
-              ? ClipRRect(
-                  borderRadius: BorderRadius.circular(4),
-                  child: Image.memory(snap.data!, width: 80, height: 50, fit: BoxFit.cover))
-              : Container(width: 80, height: 50, color: Colors.black12),
-        ),
-        if (isNew)
-          Positioned(
-            top: 0,
-            left: 0,
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
-              color: Colors.green,
-              child: const Text("NEW", style: TextStyle(fontSize: 8, color: Colors.white, fontWeight: FontWeight.bold)),
-            ),
+        else
+          IconButton(
+            icon: Icon(_isSearching ? Icons.close : Icons.search_rounded),
+            onPressed: () => setState(() {
+              _isSearching = !_isSearching;
+              if (!_isSearching) {
+                _searchController.clear();
+                _searchResult = [];
+              }
+            }),
           ),
       ],
     );
   }
+
+  Widget _buildFolderList() {
+  if (_folders.isEmpty) return const Center(child: Text("No video folders found"));
+  
+  final bool isSelecting = dragFolderController.value.isSelecting;
+  final int selectedCount = dragFolderController.value.amount;
+
+  return Stack(
+    children: [
+      Theme(
+        data: Theme.of(context).copyWith(
+          scrollbarTheme: ScrollbarThemeData(
+            thumbColor: WidgetStateProperty.resolveWith<Color?>((states) {
+              if (states.contains(WidgetState.dragged)) return Colors.blueAccent;
+              if (states.contains(WidgetState.hovered)) return Colors.blue.withOpacity(0.7);
+              return Colors.grey.withOpacity(0.4);
+            }),
+            thickness: WidgetStateProperty.all(6.0),
+            radius: const Radius.circular(10),
+            interactive: true,
+          ),
+        ),
+        child: Scrollbar(
+          controller: _folderScrollController,
+          thumbVisibility: true,
+          child: DragSelectGridView(
+            gridController: dragFolderController,
+            scrollController: _folderScrollController,
+            triggerSelectionOnTap: false, 
+            physics: const AlwaysScrollableScrollPhysics(),
+            padding: EdgeInsets.fromLTRB(16, 16, 16, isSelecting ? 100 : 20),
+            itemCount: _folders.length,
+            gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+              crossAxisCount: 1, 
+              mainAxisExtent: 95, 
+              mainAxisSpacing: 12, 
+            ),
+            itemBuilder: (context, index, isSelected) {
+              final folder = _folders[index];
+              
+              // SelectableItem এর বদলে Container ই যথেষ্ট যদি গ্রিড কন্ট্রোলার ঠিক থাকে
+              return Container(
+                decoration: BoxDecoration(
+                  color: isSelected ? Colors.blue.withOpacity(0.1) : Colors.white,
+                  borderRadius: BorderRadius.circular(15),
+                  border: Border.all(
+                    color: isSelected ? Colors.blueAccent : Colors.transparent,
+                    width: 2,
+                  ),
+                  boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 10)],
+                ),
+                child: ListTile(
+                  onTap: () async {
+                    if (isSelecting) {
+                      // এরর ফিক্স: selection.clone() এর বদলে নতুন Selection অবজেক্ট তৈরি
+                      final Set<int> updatedIndexes = Set.from(dragFolderController.value.selectedIndexes);
+                      if (updatedIndexes.contains(index)) {
+                        updatedIndexes.remove(index);
+                      } else {
+                        updatedIndexes.add(index);
+                      }
+                      dragFolderController.value = Selection(updatedIndexes);
+                    } else {
+                      // ফোল্ডারে ঢুকবে (লোডিং স্পিড ফিক্স)
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(builder: (_) => FolderDetailsPage(folder: folder)),
+                      ).then((_) => _updateWatchedStatus()); 
+                    }
+                  },
+                  onLongPress: () {
+                    if (!isSelecting) {
+                      // এরর ফিক্স: .selection এর বদলে .value ব্যবহার
+                      dragFolderController.value = Selection({index});
+                    }
+                  },
+                  contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
+                  leading: CircleAvatar(
+                    backgroundColor: isSelected ? Colors.blue : Colors.blue.withOpacity(0.1),
+                    child: Icon(
+                      isSelected ? Icons.check : Icons.folder_copy_rounded, 
+                      color: isSelected ? Colors.white : Colors.blue
+                    ),
+                  ),
+                  title: Text(folder.name, style: const TextStyle(fontWeight: FontWeight.bold)),
+                  subtitle: FutureBuilder<List<dynamic>>(
+                    future: Future.wait([folder.assetCountAsync, _getFolderSize(folder)]),
+                    builder: (context, snap) {
+                      if (snap.hasData) {
+                        return Text("${snap.data![0]} items  •  ${snap.data![1]}", 
+                               style: const TextStyle(fontSize: 12, color: Colors.blueGrey));
+                      }
+                      return const Text("...", style: TextStyle(fontSize: 12));
+                    },
+                  ),
+                  trailing: isSelected 
+                    ? const Icon(Icons.check_circle, color: Colors.blue)
+                    : const Icon(Icons.arrow_forward_ios_rounded, size: 16, color: Colors.grey),
+                ),
+              );
+            },
+          ),
+        ),
+      ),
+      
+      if (isSelecting)
+        Positioned(
+          bottom: 25, left: 50, right: 50,
+          child: FloatingActionButton.extended(
+            backgroundColor: Colors.redAccent,
+            onPressed: () async {
+              final selectedIndexes = dragFolderController.value.selectedIndexes;
+              bool confirm = await VideoDelete.showConfirmDialog(
+                context: context, 
+                title: "Delete $selectedCount Folders?",
+              );
+              if (confirm) {
+                for (var index in selectedIndexes) {
+                  await VideoDelete.deleteFullFolder(_folders[index]);
+                }
+                dragFolderController.value = Selection.empty();
+                _initGallery(); 
+              }
+            },
+            label: Text("Delete $selectedCount Folders", 
+                style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+            icon: const Icon(Icons.delete_sweep, color: Colors.white),
+          ),
+        ),
+    ],
+  );
 }
 
-// --- Folder Details Page ---
+void _updateWatchedStatus() async {
+  final watched = await VideoStorage.getWatchedIds();
+  if (mounted) {
+    setState(() {
+      _watchedIds = watched;
+    });
+  }
+}
+
+
+
+  Widget _buildVideoGrid(List<AssetEntity> list) {
+  return Theme(
+    data: Theme.of(context).copyWith(
+      scrollbarTheme: ScrollbarThemeData(
+        // স্ক্রলবার চেপে ধরলে (dragged) নীল হবে, অন্য সময় হালকা গ্রে
+        thumbColor: WidgetStateProperty.resolveWith<Color?>((states) {
+          if (states.contains(WidgetState.dragged)) return Colors.blueAccent;
+          if (states.contains(WidgetState.hovered)) return Colors.blue.withOpacity(0.7);
+          return Colors.grey.withOpacity(0.4);
+        }),
+        thickness: WidgetStateProperty.all(6.0),
+        radius: const Radius.circular(10),
+        interactive: true,
+      ),
+    ),
+    child: Scrollbar(
+      controller: _searchScrollController,
+      thumbVisibility: true,
+      interactive: true,
+      child: GridView.builder(
+        controller: _searchScrollController,
+        physics: const ClampingScrollPhysics(), // লিস্ট শেষ হলে আর স্ক্রল হবে না
+        padding: const EdgeInsets.all(12),
+        gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+          crossAxisCount: 2, 
+          crossAxisSpacing: 10, 
+          mainAxisSpacing: 10, 
+          childAspectRatio: 1.1,
+        ),
+        itemCount: list.length,
+        itemBuilder: (context, index) => VideoCard(
+          video: list[index],
+          isWatched: _watchedIds.contains(list[index].id),
+          onTap: () => _openPlayer(list, index),
+        ),
+      ),
+    ),
+  );
+}
+
+  Future<void> _openPlayer(List<AssetEntity> list, int index) async {
+    try {
+      await Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (_) => VideoPlayerPage(
+            videoAssets: list,
+            cachedPaths: const [],
+            index: index,
+            title: list[index].title ?? "Video",
+          ),
+        ),
+      );
+      if (mounted) _initGallery(); 
+    } catch (e) {
+      debugPrint("Error: $e");
+    }
+  }
+}
+
+
+
 class FolderDetailsPage extends StatefulWidget {
   final AssetPathEntity folder;
   const FolderDetailsPage({super.key, required this.folder});
@@ -275,165 +440,442 @@ class FolderDetailsPage extends StatefulWidget {
 }
 
 class _FolderDetailsPageState extends State<FolderDetailsPage> {
+  // --- মেইন ডাটা ভেরিয়েবল ---
   List<AssetEntity> _videos = [];
-  List<AssetEntity> _filteredVideos = [];
-  List<String> _watchedIds = [];
+  Set<String> _watchedIds = {};
   bool _isLoading = true;
-  bool _isSearching = false;
-  final TextEditingController _folderSearchController = TextEditingController();
+
+  final ScrollController _scrollController = ScrollController();
+
+  // --- ড্র্যাগ সিলেকশন কন্ট্রোলার (ভার্সন ০.৭.৬ এর জন্য) ---
+  final dragController = DragSelectGridViewController();
+
+  // --- লেজি লোডিং ভেরিয়েবল ---
+  int _currentPage = 0;
+  final int _pageSize = 20; 
+  bool _hasMore = true;
+  bool _isFetchingMore = false;
 
   @override
   void initState() {
     super.initState();
-    _loadVideos();
-  }
-
-  // ভিডিও লোড করার লজিক (আগের মতোই রাখা হয়েছে)
-  Future<void> _loadVideos() async {
-    final watched = await VideoStorage.getWatchedIds();
-    final videos = await widget.folder.getAssetListRange(start: 0, end: 5000);
+    _load(); 
     
-    List<AssetEntity> sortedVideos = List.from(videos);
-    sortedVideos.sort((a, b) {
-      String nameA = (a.title ?? "").toLowerCase();
-      String nameB = (b.title ?? "").toLowerCase();
-      return nameA.compareTo(nameB);
-    });
-
-    if (mounted) {
-      setState(() {
-        _videos = sortedVideos;
-        _filteredVideos = sortedVideos;
-        _watchedIds = watched;
-        _isLoading = false;
-      });
-    }
-  }
-
-  // ভিডিও প্লে করার নতুন ও ফাস্ট মেথড
-  Future<void> _handleVideoTap(int index) async {
-    final video = _filteredVideos[index];
-
-    // ১. স্ক্রিনে একটি লোডিং দেখান (পাথ জেনারেট হতে সময় লাগতে পারে)
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (context) => const Center(child: CircularProgressIndicator(color: Colors.white)),
-    );
-
-    try {
-      // ২. 'Watched' হিসেবে মার্ক করুন
-      await VideoStorage.markAsWatched(video.id);
-
-      // ৩. সব ভিডিওর ফাইল পাথ (Paths) আগেভাগে বের করে নেওয়া (Critical for performance)
-      List<File?> files = await Future.wait(
-        _filteredVideos.map((v) => v.file).toList()
-      );
-      List<String> paths = files.map((f) => f?.path ?? "").toList();
-
-      if (!mounted) return;
-      Navigator.pop(context); // লোডিং বন্ধ করুন
-
-      // ৪. 'cachedPaths' সহ প্লেয়ার ওপেন করুন
-      await Navigator.push(
-        context,
-        MaterialPageRoute(
-          builder: (_) => VideoPlayerPage(
-            videoAssets: _filteredVideos,
-            cachedPaths: paths, // ✅ এটি আপনার বিল্ড এরর সমাধান করবে
-            index: index,
-            title: video.title ?? "Video",
-          ),
-        ),
-      );
-      
-      // প্লেয়ার থেকে ফিরে আসলে লিস্ট রিফ্রেশ করুন
-      _loadVideos();
-    } catch (e) {
-      if (mounted) Navigator.pop(context);
-      debugPrint("Error: $e");
-    }
-  }
-
-  void _searchInFolder(String query) {
-    setState(() {
-      List<AssetEntity> filtered = _videos
-          .where((v) => (v.title ?? "").toLowerCase().contains(query.toLowerCase()))
-          .toList();
-      filtered.sort((a, b) => (a.title ?? "").toLowerCase().compareTo((b.title ?? "").toLowerCase()));
-      _filteredVideos = filtered;
+    // সিলেকশন চেঞ্জ হলে UI (যেমন অ্যাপবার টাইটেল) আপডেট করার জন্য
+    dragController.addListener(() {
+      setState(() {}); 
     });
   }
 
   @override
-  Widget build(BuildContext context) {
-    return Scaffold(
+  void dispose() {
+    _scrollController.dispose(); 
+    dragController.dispose();
+    super.dispose();
+  }
+
+  
+
+  // --- ভিডিও লোড করার মেইন লজিক (Lazy Loading) ---
+  Future<void> _load() async {
+    if (_isFetchingMore || !_hasMore) return;
+    setState(() => _isFetchingMore = true);
+
+    try {
+      final watched = await VideoStorage.getWatchedIds();
+      final List<AssetEntity> newVideos = await widget.folder.getAssetListRange(
+        start: _currentPage * _pageSize,
+        end: (_currentPage + 1) * _pageSize,
+      );
+
+      newVideos.sort((a, b) => (a.title ?? "").toLowerCase().compareTo((b.title ?? "").toLowerCase()));
+
+      if (mounted) {
+        setState(() {
+          _videos.addAll(newVideos);
+          _watchedIds = watched;
+          _isLoading = false;
+          _isFetchingMore = false;
+          _currentPage++;
+          if (newVideos.length < _pageSize) _hasMore = false;
+        });
+      }
+    } catch (e) {
+      if (mounted) setState(() => _isFetchingMore = false);
+    }
+  }
+   
+  String _formatBytes(int bytes) {
+  if (bytes <= 0) return "0 B";
+  const suffixes = ["B", "KB", "MB", "GB", "TB", "PB", "EB", "ZB", "YB"];
+  var i = (log(bytes) / log(1024)).floor();
+  if (i >= suffixes.length) i = suffixes.length - 1;
+  return "${(bytes / pow(1024, i)).toStringAsFixed(2)} ${suffixes[i]}";
+}
+
+  // ২. সাইজ বের করার ফাংশন
+  Future<String> _getTotalSelectedSize() async {
+  // আপনার ভার্সন অনুযায়ী সঠিক নাম 'selectedIndexes'
+  final selectedIndexes = dragController.value.selectedIndexes; 
+  
+  if (selectedIndexes.isEmpty) return "0 B";
+
+  final sizes = await Future.wait(
+    selectedIndexes.map((index) async {
+      final file = await _videos[index].file;
+      return file != null ? await file.length() : 0;
+    }),
+  );
+
+  int totalBytes = sizes.fold(0, (int sum, size) => sum + (size as int));
+  return _formatBytes(totalBytes);
+}
+
+  // --- মাল্টিপল ভিডিও ডিলিট করার ফাংশন (ফিক্সড ভার্সন) ---
+  Future<void> _deleteSelectedVideos() async {
+    // ০.৭.৬ ভার্সনে ইনডেক্স পাওয়ার জন্য 'selectedIndexes' (es) ব্যবহার করুন
+    final selectedIndexes = dragController.value.selectedIndexes;
+    
+    if (selectedIndexes.isEmpty) return;
+
+    final List<AssetEntity> toDelete = selectedIndexes.map((i) => _videos[i]).toList();
+    final List<String> ids = toDelete.map((v) => v.id).toList();
+    
+    try {
+      final List<String> result = await PhotoManager.editor.deleteWithIds(ids);
+      if (result.isNotEmpty) {
+        setState(() {
+          _videos.removeWhere((v) => toDelete.contains(v));
+          // ক্লিয়ার করার সময় অবশ্যই ব্র্যাকেট () দিবেন
+          dragController.value = Selection.empty(); 
+        });
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text("Deleted successfully")),
+          );
+        }
+      }
+    } catch (e) {
+      debugPrint("Error deleting videos: $e");
+    }
+  }
+
+  Future<void> _updateWatchedStatus() async {
+    final watched = await VideoStorage.getWatchedIds();
+    if (mounted) setState(() => _watchedIds = watched);
+  }
+
+  @override
+Widget build(BuildContext context) {
+  final bool isSelecting = dragController.value.isSelecting;
+  final int selectedCount = dragController.value.amount;
+
+  return PopScope(
+    // লজিক: যদি ভিডিও সিলেক্ট করা থাকে (isSelecting = true), তবে system back বন্ধ থাকবে (canPop = false)
+    canPop: !isSelecting, 
+    onPopInvokedWithResult: (didPop, result) {
+      if (didPop) return;
+
+      // লজিক: যদি ভিডিও সিলেক্ট করা অবস্থায় ব্যাক বাটন চাপা হয়, তবে সিলেকশন ক্লিয়ার হবে
+      if (isSelecting) {
+        setState(() {
+          dragController.value = Selection.empty();
+        });
+      }
+    },
+    child: Scaffold(
+      backgroundColor: const Color(0xFFF8F9FA),
       appBar: AppBar(
-        title: _isSearching
-            ? TextField(
-                controller: _folderSearchController,
-                autofocus: true,
-                decoration: const InputDecoration(hintText: "Search in folder...", border: InputBorder.none),
-                onChanged: _searchInFolder,
-              )
-            : Text(widget.folder.name),
+        elevation: 0.5,
+        backgroundColor: Colors.white,
+        foregroundColor: Colors.black,
+        // লজিক: সার্চ মোডে থাকলে বাম পাশে ব্যাক অ্যারো বাটন (সার্চের ক্ষেত্রে যেমন করেছিলেন)
+        leading: isSelecting 
+          ? IconButton(
+              icon: const Icon(Icons.arrow_back),
+              onPressed: () => setState(() => dragController.value = Selection.empty()),
+            ) 
+          : null,
+        title: isSelecting 
+          ? Row(
+              children: [
+                Text("$selectedCount Selected", style: const TextStyle(fontWeight: FontWeight.bold)),
+                const SizedBox(width: 8),
+                FutureBuilder<String>(
+                  future: _getTotalSelectedSize(),
+                  builder: (context, snapshot) {
+                    return Text(
+                      snapshot.hasData ? "(${snapshot.data})" : "(...)",
+                      style: const TextStyle(fontSize: 14, color: Colors.blueAccent, fontWeight: FontWeight.normal),
+                    );
+                  },
+                ),
+              ],
+            )
+          : Text(widget.folder.name, style: const TextStyle(fontWeight: FontWeight.bold)),
         actions: [
-          IconButton(
-            icon: Icon(_isSearching ? Icons.close : Icons.search),
-            onPressed: () {
-              setState(() {
-                _isSearching = !_isSearching;
-                if (!_isSearching) {
-                  _folderSearchController.clear();
-                  _filteredVideos = _videos;
-                }
-              });
-            },
-          )
+          if (isSelecting)
+            IconButton(
+              icon: const Icon(Icons.close),
+              onPressed: () => setState(() => dragController.value = Selection.empty()),
+            ),
         ],
       ),
-      body: _isLoading
-          ? const Center(child: CircularProgressIndicator())
-          : ListView.builder(
-              itemCount: _filteredVideos.length,
-              itemBuilder: (context, index) {
-                final video = _filteredVideos[index];
-                bool isNew = !_watchedIds.contains(video.id);
-                return ListTile(
-                  contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-                  leading: _buildThumbnail(video, isNew),
-                  title: Text(video.title ?? "Video", maxLines: 1, overflow: TextOverflow.ellipsis),
-                  subtitle: Text("${(video.duration ~/ 60)}:${(video.duration % 60).toString().padLeft(2, '0')}"),
-                  trailing: const Icon(Icons.play_circle_outline),
-                  onTap: () => _handleVideoTap(index), // ✅ নতুন হ্যান্ডলার কল করা হয়েছে
-                );
-              },
+      // --- আপনার বাকি সব লজিক ও UI আগের মতোই থাকবে ---
+      body: Theme(
+        data: Theme.of(context).copyWith(
+          scrollbarTheme: ScrollbarThemeData(
+            thumbColor: WidgetStateProperty.resolveWith<Color?>((states) {
+              if (states.contains(WidgetState.dragged)) return Colors.blueAccent;
+              if (states.contains(WidgetState.hovered)) return Colors.blue.withOpacity(0.7);
+              return Colors.grey.withOpacity(0.4);
+            }),
+            thickness: WidgetStateProperty.all(7.0),
+            radius: const Radius.circular(10),
+            interactive: true,
+          ),
+        ),
+        child: Scrollbar(
+          controller: _scrollController,
+          thumbVisibility: true,
+          trackVisibility: false,
+          child: Stack(
+            children: [
+              _isLoading
+                  ? const Center(child: CircularProgressIndicator(strokeWidth: 2))
+                  : Column(
+                      children: [
+                        Expanded(
+                          child: DragSelectGridView(
+                            gridController: dragController,
+                            scrollController: _scrollController,
+                            physics: const ClampingScrollPhysics(), 
+                            padding: const EdgeInsets.all(12),
+                            itemCount: _videos.length,
+                            autoScrollHotspotHeight: 100, 
+                            gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                              crossAxisCount: 2, 
+                              crossAxisSpacing: 12, 
+                              mainAxisSpacing: 12, 
+                              childAspectRatio: 1.1,
+                            ),
+                            itemBuilder: (context, index, isSelected) {
+                              final video = _videos[index];
+
+                              if (index >= _videos.length - 1 && _hasMore && !_isFetchingMore) {
+                                WidgetsBinding.instance.addPostFrameCallback((_) => _load());
+                              }
+
+                              return Stack(
+                                children: [
+                                  VideoCard(
+                                    video: video,
+                                    isWatched: _watchedIds.contains(video.id),
+                                    onTap: () {
+                                      if (!isSelecting) {
+                                        _playVideo(index);
+                                      } else {
+                                        // সিলেকশন মোডে ট্যাপ করলে সিলেক্ট/আনসিল্টে হবে
+                                        final updatedIndexes = Set<int>.from(dragController.value.selectedIndexes);
+                                        if (updatedIndexes.contains(index)) {
+                                          updatedIndexes.remove(index);
+                                        } else {
+                                          updatedIndexes.add(index);
+                                        }
+                                        dragController.value = Selection(updatedIndexes);
+                                      }
+                                    },
+                                  ),
+                                  if (isSelected)
+                                    Container(
+                                      decoration: BoxDecoration(
+                                        color: Colors.blue.withOpacity(0.3), 
+                                        borderRadius: BorderRadius.circular(12),
+                                        border: Border.all(color: Colors.blueAccent, width: 2),
+                                      ),
+                                      child: const Center(
+                                        child: Icon(Icons.check_circle, color: Colors.white, size: 30),
+                                      ),
+                                    ),
+                                ],
+                              );
+                            },
+                          ),
+                        ),
+                        if (_isFetchingMore)
+                          const Padding(
+                            padding: EdgeInsets.symmetric(vertical: 12),
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          ),
+                      ],
+                    ),
+              
+              if (isSelecting)
+                Positioned(
+                  bottom: 25,
+                  left: 50,
+                  right: 50,
+                  child: FloatingActionButton.extended(
+                    backgroundColor: Colors.redAccent,
+                    onPressed: _deleteSelectedVideos,
+                    label: Text("Delete $selectedCount Videos", 
+                        style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                    icon: const Icon(Icons.delete_forever, color: Colors.white),
+                  ),
+                ),
+            ],
+          ),
+        ),
+      ),
+    ),
+  );
+}
+
+
+
+  Future<void> _playVideo(int index) async {
+    await Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => VideoPlayerPage(
+          videoAssets: _videos, 
+          cachedPaths: const [], 
+          index: index,
+          title: _videos[index].title ?? "Video",
+        ),
+      ),
+    );
+    if (mounted) _updateWatchedStatus();
+  }
+}
+
+// --- Fixed Video Card Component ---
+class VideoCard extends StatelessWidget {
+  final AssetEntity video;
+  final bool isWatched;
+  final VoidCallback onTap;
+
+  const VideoCard({super.key, required this.video, required this.isWatched, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        clipBehavior: Clip.antiAlias,
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: Colors.black.withOpacity(0.05)),
+        ),
+        child: Stack(
+          children: [
+            // Fixed Thumbnail Logic
+            Positioned.fill(
+              child: AssetEntityImage(
+                video,
+                isOriginal: false,
+                thumbnailSize: const ThumbnailSize(300, 300),
+                fit: BoxFit.cover,
+                errorBuilder: (context, error, stackTrace) => Container(color: Colors.grey[200]),
+              ),
             ),
+            
+              Positioned(
+      top: 8,
+      right: 8,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+        decoration: BoxDecoration(
+          color: Colors.black.withOpacity(0.6),
+          borderRadius: BorderRadius.circular(4),
+        ),
+        child: Text(
+          _formatDateTime(video.createDateTime),
+          style: const TextStyle(color: Colors.white, fontSize: 8.5, fontWeight: FontWeight.bold),
+        ),
+      ),
+    ),
+
+            // Watched Effect
+            if (isWatched)
+  const Positioned.fill(
+    child: Center(
+      child: Icon(
+        Icons.play_circle_outline, // আউটলাইন আইকন যা ছবিকে ঢাকবে না
+        color: Colors.white70, 
+        size: 40,
+      ),
+    ),
+  ),
+
+
+            Positioned.fill(
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.topCenter,
+                    end: Alignment.bottomCenter,
+                    colors: [Colors.transparent, Colors.black.withOpacity(0.7)],
+                  ),
+                ),
+              ),
+            ),
+            
+            if (!isWatched)
+              Positioned(
+                top: 8, left: 8,
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                  decoration: BoxDecoration(color: Colors.redAccent, borderRadius: BorderRadius.circular(4)),
+                  child: const Text("NEW", style: TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold)),
+                ),
+              ),
+
+            Positioned(
+              bottom: 25, right: 8,
+              child: Text(
+                _formatDuration(video.duration),
+                style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold),
+              ),
+            ),
+            Positioned(
+              bottom: 5, left: 8, right: 8,
+              child: Text(
+                video.title ?? "Unknown",
+                maxLines: 1, overflow: TextOverflow.ellipsis,
+                style: const TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.w500),
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 
-  Widget _buildThumbnail(AssetEntity video, bool isNew) {
-    return Stack(
-      children: [
-        FutureBuilder(
-          future: video.thumbnailDataWithSize(const ThumbnailSize(150, 100)),
-          builder: (_, snap) => snap.hasData
-              ? ClipRRect(
-                  borderRadius: BorderRadius.circular(4),
-                  child: Image.memory(snap.data!, width: 80, height: 50, fit: BoxFit.cover))
-              : Container(width: 80, height: 50, color: Colors.black12),
-        ),
-        if (isNew)
-          Positioned(
-            top: 0,
-            left: 0,
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
-              color: Colors.green,
-              child: const Text("NEW", style: TextStyle(fontSize: 8, color: Colors.white, fontWeight: FontWeight.bold)),
-            ),
-          ),
-      ],
-    );
+  String _formatDuration(int seconds) {
+    final d = Duration(seconds: seconds);
+    final m = d.inMinutes.remainder(60).toString().padLeft(2, '0');
+    final s = d.inSeconds.remainder(60).toString().padLeft(2, '0');
+    return d.inHours > 0 ? "${d.inHours}:$m:$s" : "$m:$s";
   }
-}
+
+   String _formatDateTime(DateTime date) {
+    final day = date.day.toString().padLeft(2, '0');
+    final year = date.year;
+    
+    const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+    final month = months[date.month - 1];
+
+    int hour = date.hour;
+    final String period = hour >= 12 ? "PM" : "AM";
+    hour = hour % 12;
+    hour = hour == 0 ? 12 : hour; 
+    final minute = date.minute.toString().padLeft(2, '0');
+
+    return "$day $month, $year | ${hour.toString().padLeft(2, '0')}:$minute $period";
+  }
+
+ 
+
+} 

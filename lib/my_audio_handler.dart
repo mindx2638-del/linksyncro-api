@@ -1,5 +1,6 @@
 import 'package:audio_service/audio_service.dart';
 import 'package:just_audio/just_audio.dart';
+import 'package:flutter/foundation.dart';
 
 class MyAudioHandler extends BaseAudioHandler {
   final _player = AudioPlayer();
@@ -38,34 +39,44 @@ class MyAudioHandler extends BaseAudioHandler {
   }
 
   Future<void> _playCurrent({bool autoStart = true}) async {
-    if (playlist.isEmpty || currentIndex < 0 || currentIndex >= playlist.length) return;
-    
-    final file = playlist[currentIndex];
-    final currentTitle = videoTitles[currentIndex];
-    final currentId = videoIds[currentIndex];
+  if (playlist.isEmpty || currentIndex < 0 || currentIndex >= playlist.length) return;
+  
+  final file = playlist[currentIndex];
+  final currentTitle = videoTitles[currentIndex];
+  final currentId = videoIds[currentIndex];
 
-    try {
-      // ১. আগে ফাইল সেট করুন যাতে ডিউরেশন পাওয়া যায়
-      final duration = await _player.setFilePath(file);
+  try {
+    // ১. ফাইল সেট করার সময় preload: true দিন, এতে ফাইলটি দ্রুত প্লে হওয়ার জন্য প্রস্তুত থাকে
+    // এবং ডিকোডিং ল্যাগ কমে যায়।
+    final duration = await _player.setFilePath(
+      file, 
+      preload: true
+    );
 
-      // ২. নোটিফিকেশন (MediaItem) আপডেট করুন
-      mediaItem.add(MediaItem(
-        id: currentId,
-        album: "LinkSyncro Pro",
-        title: currentTitle,
-        duration: duration,
-        artUri: Uri.file(file), // আপনি চাইলে এখানে থাম্বনেইল পাথ দিতে পারেন
-      ));
+    // ২. নোটিফিকেশন (MediaItem) আপডেট করুন
+    mediaItem.add(MediaItem(
+      id: currentId,
+      album: "LinkSyncro Pro",
+      title: currentTitle,
+      duration: duration,
+      // থাম্বনেইল হিসেবে ভিডিও ফাইলটিই ব্যবহার করছেন, যা ঠিক আছে
+      artUri: Uri.file(file), 
+    ));
 
-      if (autoStart) {
-        _player.play();
-      } else {
-        _player.pause();
-      }
-    } catch (e) {
-      print("Error loading audio: $e");
+    // ৩. প্লে বা পজ লজিক
+    if (autoStart) {
+      // play() করার আগে নিশ্চিত করুন প্লেয়ারটি আইডিয়াল স্টেটে নেই
+      await _player.play();
+    } else {
+      await _player.pause();
     }
+  } catch (e, stackTrace) {
+    // এরর ট্র্যাকিংয়ের জন্য প্রিন্ট
+    debugPrint("Error loading audio: $e");
+    debugPrintStack(stackTrace: stackTrace);
   }
+}
+
 
   @override
   Future<void> seek(Duration position) => _player.seek(position);
