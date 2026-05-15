@@ -1,32 +1,17 @@
 import 'dart:io';
 import 'dart:convert';
-import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 import 'package:permission_handler/permission_handler.dart';
-import 'package:media_scanner/media_scanner.dart';
 import 'package:path_provider/path_provider.dart';
-
-import 'package:media_kit/media_kit.dart';
-
 import 'youtube_service.dart';
 import 'facebook_service.dart';
 import 'instagram_service.dart';
-
-import 'package:photo_manager/photo_manager.dart';
-import 'video_gallery_page.dart'; 
-import 'video_player_page.dart';
-
-
-import 'my_audio_handler.dart';
-import 'package:audio_service/audio_service.dart';
-
+import 'video_gallery_page.dart';  
 import 'dart:isolate';
 import 'dart:ui';
 import 'package:flutter_downloader/flutter_downloader.dart';
-
-late MyAudioHandler audioHandler;
 
 @pragma('vm:entry-point')
 void downloadCallback(String id, int status, int progress) {
@@ -36,27 +21,10 @@ void downloadCallback(String id, int status, int progress) {
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-
-  // ✅ MediaKit (video player use করলে লাগবে)
-  MediaKit.ensureInitialized();
-
-  // 📥 Downloader init
   await FlutterDownloader.initialize(
-    debug: true,
+    debug: true, 
+    ignoreSsl: true,
   );
-
-  // 🎧 Audio Service init
-  audioHandler = await AudioService.init(
-    builder: () => MyAudioHandler(),
-    config: const AudioServiceConfig(
-      androidNotificationChannelId: 'com.linksyncro.audio',
-      androidNotificationChannelName: 'LinkSyncro Playback',
-      androidNotificationIcon: 'mipmap/ic_launcher',
-      androidShowNotificationBadge: true,
-      androidStopForegroundOnPause: false,
-    ),
-  );
-
   runApp(const LinkSyncroApp());
 }
 
@@ -73,7 +41,6 @@ class DownloadTask {
   bool isProcessing;
   bool isPaused;
   bool isFinished;
-
 
   DownloadTask({
     required this.id,
@@ -118,16 +85,14 @@ class LinkSyncroApp extends StatelessWidget {
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
-
   @override
   State<HomeScreen> createState() => _HomeScreenState();
 }
 
 class _HomeScreenState extends State<HomeScreen> {
-
    final ReceivePort _port = ReceivePort();
    @override
-void initState() {
+  void initState() {
   super.initState();
   _checkPermission();
   IsolateNameServer.removePortNameMapping('downloader_send_port');
@@ -136,13 +101,11 @@ void initState() {
     String id = data[0];
     int status = data[1];
     int progress = data[2];
-
     setState(() {
       final task = _downloadTasks.firstWhere(
         (t) => t.id == id, 
         orElse: () => DownloadTask(id: "", inputUrl: "")
-      );
-      
+      );     
       if (task.id.isNotEmpty) {
         if (progress != -1) {
           task.progress = progress / 100;
@@ -162,10 +125,8 @@ void initState() {
       }
     });
   });
-
   FlutterDownloader.registerCallback(downloadCallback);
 }
-
 
   Future<void> _checkPermission() async {
     if (await Permission.notification.isDenied) {
@@ -215,7 +176,6 @@ void initState() {
       _downloadTasks.insert(0, task);
       _urlController.clear();
     });
-
     _startDownloadProcess(task);
   }
 
@@ -227,7 +187,6 @@ void initState() {
       task.videoTitle = result['title'] ?? "Video_${task.id}";
       task.thumbnailUrl = result['thumbnail'];
     });
-
     if (task.downloadUrl == null) throw "Invalid response from server";
     final directory = await getExternalStorageDirectory();
     if (directory == null) throw "Storage access denied";
@@ -391,46 +350,14 @@ Future<void> _executeDownload(DownloadTask task) async {
     );
   }
 
-@override
+ @override
 Widget build(BuildContext context) {
   final bool isDark = Theme.of(context).brightness == Brightness.dark;
-
-  // --- কাস্টম কালার কনফিগুরেশন (এখান থেকে ডার্ক ও লাইট কালার আলাদাভাবে পরিবর্তন করুন) ---
-  
-  // ১. জেনারেল কালারস
   final Color bgColor = isDark ? const Color(0xFF0F111A) : const Color(0xFFF8F9FA);
-  final Color cardBgColor = isDark ? const Color(0xFF1C1F2E) : Colors.white;
-
-  // ২. অ্যাপবার কালারস
-  final Color appBarIconColor = isDark ? Colors.white : const Color.fromARGB(255, 0, 38, 255);
-  final Color appBarTextColor = isDark ? Colors.white : const Color.fromARGB(255, 0, 38, 255);
-
-  // ৩. ড্রয়ার কালারস
-  final Color drawerBgColor = isDark ? const Color(0xFF1C1F2E) : Colors.white;
-  final Color drawerIconColor = isDark ? Colors.cyanAccent : const Color.fromARGB(255, 0, 38, 255);
-  final Color drawerTextColor = isDark ? Colors.white : Colors.black87;
-
-  // ৪. ইনপুট ফিল্ড কালারস
-  final Color inputFillColor = isDark ? Colors.white.withOpacity(0.05) : Colors.grey[100]!;
-  final Color inputHintColor = isDark ? Colors.white38 : const Color.fromARGB(255, 43, 0, 255);
-  final Color inputTextColor = isDark ? Colors.white : Colors.black87;
-  final Color inputPrefixIconColor = isDark ? Colors.blueAccent : const Color.fromARGB(255, 0, 38, 254);
-  final Color inputSuffixIconColor = isDark ? Colors.lightBlue : const Color.fromARGB(255, 0, 38, 255);
-
-  // ৫. বাটন কালারস
-  final Color buttonBgColor = isDark ? const Color(0xFF3D5AFE) : const Color.fromARGB(255, 0, 38, 255);
-  final Color buttonTextColor = isDark ? Colors.white : Colors.white;
-
-  // ৬. এম্পটি স্টেট (No Downloads) কালারস
-  final Color emptyStateIconColor = isDark ? Colors.blueGrey : const Color.fromARGB(255, 0, 38, 255).withOpacity(0.2);
-  final Color emptyStateTextColor = isDark ? Colors.white38 : Colors.grey;
-
   return Scaffold(
     backgroundColor: bgColor,
-    
-    // ১. ড্রয়ার (Drawer)
     drawer: Drawer(
-      backgroundColor: drawerBgColor,
+      backgroundColor: isDark ? const Color(0xFF1C1F2E) : Colors.white,
       child: Column(
         children: [
           DrawerHeader(
@@ -441,90 +368,59 @@ Widget build(BuildContext context) {
                 children: [
                   const Icon(Icons.sync_rounded, color: Colors.white, size: 50),
                   const SizedBox(height: 10),
-                  const Text(
-                    "LINKSYNCRO", 
-                    style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold, letterSpacing: 1.2)
-                  ),
+                  const Text("LINKSYNCRO PRO", style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold, letterSpacing: 1.2)),
                 ],
               ),
             ),
           ),
-          ListTile(
-            leading: Icon(Icons.settings_outlined, color: drawerIconColor), 
-            title: Text("Settings", style: TextStyle(color: drawerTextColor)), 
-            onTap: () => Navigator.pop(context)
-          ),
-          ListTile(
-            leading: Icon(Icons.history_rounded, color: drawerIconColor), 
-            title: Text("Download History", style: TextStyle(color: drawerTextColor)), 
-            onTap: () => Navigator.pop(context)
-          ),
+          ListTile(leading: const Icon(Icons.settings_outlined, color: Colors.indigo), title: const Text("Settings"), onTap: () => Navigator.pop(context)),
+          ListTile(leading: const Icon(Icons.history_rounded, color: Colors.indigo), title: const Text("Download History"), onTap: () => Navigator.pop(context)),
           const Divider(),
-          ListTile(
-            leading: Icon(Icons.info_outline, color: drawerIconColor), 
-            title: Text("About", style: TextStyle(color: drawerTextColor)), 
-            onTap: () => Navigator.pop(context)
-          ),
+          ListTile(leading: const Icon(Icons.info_outline, color: Colors.indigo), title: const Text("About"), onTap: () => Navigator.pop(context)),
         ],
       ),
     ),
 
-    // ২. অ্যাপবার (AppBar)
+    // ২. AppBar
     appBar: AppBar(
       backgroundColor: Colors.transparent,
       elevation: 0,
-      iconTheme: IconThemeData(color: appBarIconColor),
-      title: Text(
-        "LINKSYNCRO", 
-        style: TextStyle(fontWeight: FontWeight.w900, letterSpacing: 1.5, color: appBarTextColor)
-      ),
+      iconTheme: IconThemeData(color: isDark ? Colors.white : Colors.indigo),
+      title: Text("LINKSYNCRO", style: TextStyle(fontWeight: FontWeight.w900, letterSpacing: 1.5, color: isDark ? Colors.white : Colors.indigo)),
       actions: [
         IconButton(
-          icon: Icon(Icons.delete_sweep_rounded, color: appBarIconColor),
+          icon: Icon(Icons.delete_sweep_rounded, color: isDark ? Colors.white : Colors.indigo),
           tooltip: "Clear Completed",
           onPressed: () => setState(() => _downloadTasks.retainWhere((t) => !t.isFinished)),
         ),
         IconButton(
-          icon: Icon(Icons.video_library_rounded, color: appBarIconColor),
+          icon: Icon(Icons.video_library_rounded, color: isDark ? Colors.white : Colors.indigo),
           onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (context) => const VideoGalleryPage())),
         ),
         const SizedBox(width: 10),
       ],
     ),
 
-    // ৩. বডি (Body)
     body: Column(
       children: [
-        // ইনপুট কার্ড
         Container(
           margin: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
           padding: const EdgeInsets.all(20),
           decoration: BoxDecoration(
-            color: cardBgColor,
+            color: isDark ? const Color(0xFF1C1F2E) : Colors.white,
             borderRadius: BorderRadius.circular(25),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withOpacity(isDark ? 0.2 : 0.05), 
-                blurRadius: 15, 
-                offset: const Offset(0, 5)
-              )
-            ],
+            boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 15, offset: const Offset(0, 5))],
           ),
           child: Column(
             children: [
               TextField(
                 controller: _urlController,
-                style: TextStyle(color: inputTextColor),
                 decoration: InputDecoration(
                   filled: true,
-                  fillColor: inputFillColor,
+                  fillColor: isDark ? Colors.white.withOpacity(0.05) : Colors.grey[100],
                   hintText: "Paste video link here...",
-                  hintStyle: TextStyle(color: inputHintColor),
-                  prefixIcon: Icon(Icons.link_rounded, color: inputPrefixIconColor),
-                  suffixIcon: IconButton(
-                    icon: Icon(Icons.content_paste_rounded, color: inputSuffixIconColor), 
-                    onPressed: _pasteFromClipboard
-                  ),
+                  prefixIcon: const Icon(Icons.link_rounded, color: Colors.indigo),
+                  suffixIcon: IconButton(icon: const Icon(Icons.content_paste_rounded, color: Colors.indigo), onPressed: _pasteFromClipboard),
                   border: OutlineInputBorder(borderRadius: BorderRadius.circular(15), borderSide: BorderSide.none),
                 ),
               ),
@@ -534,8 +430,8 @@ Widget build(BuildContext context) {
                 height: 50,
                 child: ElevatedButton(
                   style: ElevatedButton.styleFrom(
-                    backgroundColor: buttonBgColor,
-                    foregroundColor: buttonTextColor,
+                    backgroundColor: Colors.indigo,
+                    foregroundColor: Colors.white,
                     shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
                     elevation: 0,
                   ),
@@ -546,20 +442,15 @@ Widget build(BuildContext context) {
             ],
           ),
         ),
-
-        // ডাউনলোড লিস্ট
         Expanded(
           child: _downloadTasks.isEmpty 
             ? Center(
                 child: Column(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
-                    Icon(Icons.cloud_download_outlined, size: 80, color: emptyStateIconColor),
+                    Icon(Icons.cloud_download_outlined, size: 80, color: Colors.indigo.withOpacity(0.2)),
                     const SizedBox(height: 16),
-                    Text(
-                      "No downloads yet", 
-                      style: TextStyle(fontSize: 16, color: emptyStateTextColor)
-                    ),
+                    Text("No downloads yet", style: TextStyle(fontSize: 16, color: isDark ? Colors.white38 : Colors.grey)),
                   ],
                 ),
               )

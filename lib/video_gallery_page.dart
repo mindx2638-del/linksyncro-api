@@ -1,7 +1,7 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:photo_manager/photo_manager.dart';
-import 'package:photo_manager_image_provider/photo_manager_image_provider.dart'; // এই ইমপোর্টটি নিশ্চিত করুন
+import 'package:photo_manager_image_provider/photo_manager_image_provider.dart'; 
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:media_kit/media_kit.dart';
 import 'video_player_page.dart';
@@ -10,10 +10,8 @@ import 'package:drag_select_grid_view/drag_select_grid_view.dart';
 import 'dart:math'; 
 
 
-// --- Shared Preferences Helper ---
 class VideoStorage {
   static const String _key = 'watched_videos_list';
-
   static Future<void> markAsWatched(String id) async {
     final prefs = await SharedPreferences.getInstance();
     final watched = prefs.getStringList(_key) ?? [];
@@ -22,7 +20,6 @@ class VideoStorage {
       await prefs.setStringList(_key, watched);
     }
   }
-
   static Future<Set<String>> getWatchedIds() async {
     final prefs = await SharedPreferences.getInstance();
     return (prefs.getStringList(_key) ?? []).toSet();
@@ -31,7 +28,6 @@ class VideoStorage {
 
 class VideoGalleryPage extends StatefulWidget {
   const VideoGalleryPage({super.key});
-
   @override
   State<VideoGalleryPage> createState() => _VideoGalleryPageState();
 }
@@ -51,36 +47,24 @@ class _VideoGalleryPageState extends State<VideoGalleryPage> {
 
   
   Future<String> _getFolderSize(AssetPathEntity folder) async {
-  // ১. চেক করা হবে এই ফোল্ডারের সাইজ আগে একবার বের করা হয়েছে কি না
   if (_folderSizeCache.containsKey(folder.id)) {
     return _folderSizeCache[folder.id]!;
   }
-
   try {
-    // ফোল্ডারের ভিডিও লিস্ট নেওয়া হচ্ছে (৫০০০ পর্যন্ত)
     final assets = await folder.getAssetListRange(start: 0, end: 5000);
     int totalBytes = 0;
-
-    // ২. প্যারালাল প্রসেসিং: সব ফাইলের সাইজ একসাথে চেক হবে (এটি সুপার ফাস্ট)
-    final List<File?> files = await Future.wait(assets.map((asset) => asset.file));
-    
+    final List<File?> files = await Future.wait(assets.map((asset) => asset.file));  
     for (var file in files) {
       if (file != null) {
         totalBytes += await file.length();
       }
     }
-
     if (totalBytes <= 0) return "0 B";
-
     const suffixes = ["B", "KB", "MB", "GB", "TB", "PB", "EB"];
     var i = (log(totalBytes) / log(1024)).floor();
     if (i >= suffixes.length) i = suffixes.length - 1;
-
     String result = "${(totalBytes / pow(1024, i)).toStringAsFixed(1)} ${suffixes[i]}";
-    
-    // ৩. রেজাল্টটি ক্যাশে সেভ করা হচ্ছে যাতে দ্বিতীয়বার আর ক্যালকুলেট করতে না হয়
     _folderSizeCache[folder.id] = result;
-    
     return result;
   } catch (e) {
     debugPrint("Error: $e");
@@ -88,13 +72,11 @@ class _VideoGalleryPageState extends State<VideoGalleryPage> {
   }
 }
 
-
   @override
   void initState() {
     super.initState();
     MediaKit.ensureInitialized();
     _initGallery();
-    // লিসেনার যোগ করুন যাতে সিলেকশন করলে টাইটেল আপডেট হয়
     dragFolderController.addListener(() => setState(() {}));
   }
 
@@ -103,7 +85,7 @@ class _VideoGalleryPageState extends State<VideoGalleryPage> {
     _folderScrollController.dispose();
     _searchController.dispose();
     _searchScrollController.dispose();
-    dragFolderController.dispose(); // এটি যোগ করুন
+    dragFolderController.dispose(); 
     super.dispose();
   }
 
@@ -113,19 +95,13 @@ class _VideoGalleryPageState extends State<VideoGalleryPage> {
       if (mounted) setState(() => _isLoading = false);
       return;
     }
-
     final watched = await VideoStorage.getWatchedIds();
     final paths = await PhotoManager.getAssetPathList(type: RequestType.video);
-
-    // ফোল্ডার সর্টিং (A-Z)
     List<AssetPathEntity> folders = paths.where((p) => !p.isAll).toList();
     folders.sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
-
-    // সব ভিডিও লোড (সার্চের জন্য)
     final allPath = paths.firstWhere((p) => p.isAll, orElse: () => paths.first);
     List<AssetEntity> allVideos = await allPath.getAssetListRange(start: 0, end: 5000);
     allVideos.sort((a, b) => (a.title ?? "").toLowerCase().compareTo((b.title ?? "").toLowerCase()));
-
     if (mounted) {
       setState(() {
         _folders = folders;
@@ -264,8 +240,6 @@ class _VideoGalleryPageState extends State<VideoGalleryPage> {
             ),
             itemBuilder: (context, index, isSelected) {
               final folder = _folders[index];
-              
-              // SelectableItem এর বদলে Container ই যথেষ্ট যদি গ্রিড কন্ট্রোলার ঠিক থাকে
               return Container(
                 decoration: BoxDecoration(
                   color: isSelected ? Colors.blue.withOpacity(0.1) : Colors.white,
@@ -279,7 +253,6 @@ class _VideoGalleryPageState extends State<VideoGalleryPage> {
                 child: ListTile(
                   onTap: () async {
                     if (isSelecting) {
-                      // এরর ফিক্স: selection.clone() এর বদলে নতুন Selection অবজেক্ট তৈরি
                       final Set<int> updatedIndexes = Set.from(dragFolderController.value.selectedIndexes);
                       if (updatedIndexes.contains(index)) {
                         updatedIndexes.remove(index);
@@ -288,7 +261,6 @@ class _VideoGalleryPageState extends State<VideoGalleryPage> {
                       }
                       dragFolderController.value = Selection(updatedIndexes);
                     } else {
-                      // ফোল্ডারে ঢুকবে (লোডিং স্পিড ফিক্স)
                       Navigator.push(
                         context,
                         MaterialPageRoute(builder: (_) => FolderDetailsPage(folder: folder)),
@@ -297,7 +269,6 @@ class _VideoGalleryPageState extends State<VideoGalleryPage> {
                   },
                   onLongPress: () {
                     if (!isSelecting) {
-                      // এরর ফিক্স: .selection এর বদলে .value ব্যবহার
                       dragFolderController.value = Selection({index});
                     }
                   },
@@ -367,13 +338,10 @@ void _updateWatchedStatus() async {
   }
 }
 
-
-
   Widget _buildVideoGrid(List<AssetEntity> list) {
   return Theme(
     data: Theme.of(context).copyWith(
       scrollbarTheme: ScrollbarThemeData(
-        // স্ক্রলবার চেপে ধরলে (dragged) নীল হবে, অন্য সময় হালকা গ্রে
         thumbColor: WidgetStateProperty.resolveWith<Color?>((states) {
           if (states.contains(WidgetState.dragged)) return Colors.blueAccent;
           if (states.contains(WidgetState.hovered)) return Colors.blue.withOpacity(0.7);
@@ -390,7 +358,7 @@ void _updateWatchedStatus() async {
       interactive: true,
       child: GridView.builder(
         controller: _searchScrollController,
-        physics: const ClampingScrollPhysics(), // লিস্ট শেষ হলে আর স্ক্রল হবে না
+        physics: const ClampingScrollPhysics(), 
         padding: const EdgeInsets.all(12),
         gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
           crossAxisCount: 2, 
@@ -429,28 +397,19 @@ void _updateWatchedStatus() async {
   }
 }
 
-
-
 class FolderDetailsPage extends StatefulWidget {
   final AssetPathEntity folder;
   const FolderDetailsPage({super.key, required this.folder});
-
   @override
   State<FolderDetailsPage> createState() => _FolderDetailsPageState();
 }
 
 class _FolderDetailsPageState extends State<FolderDetailsPage> {
-  // --- মেইন ডাটা ভেরিয়েবল ---
   List<AssetEntity> _videos = [];
   Set<String> _watchedIds = {};
   bool _isLoading = true;
-
   final ScrollController _scrollController = ScrollController();
-
-  // --- ড্র্যাগ সিলেকশন কন্ট্রোলার (ভার্সন ০.৭.৬ এর জন্য) ---
   final dragController = DragSelectGridViewController();
-
-  // --- লেজি লোডিং ভেরিয়েবল ---
   int _currentPage = 0;
   final int _pageSize = 20; 
   bool _hasMore = true;
@@ -460,8 +419,6 @@ class _FolderDetailsPageState extends State<FolderDetailsPage> {
   void initState() {
     super.initState();
     _load(); 
-    
-    // সিলেকশন চেঞ্জ হলে UI (যেমন অ্যাপবার টাইটেল) আপডেট করার জন্য
     dragController.addListener(() {
       setState(() {}); 
     });
@@ -474,22 +431,16 @@ class _FolderDetailsPageState extends State<FolderDetailsPage> {
     super.dispose();
   }
 
-  
-
-  // --- ভিডিও লোড করার মেইন লজিক (Lazy Loading) ---
   Future<void> _load() async {
     if (_isFetchingMore || !_hasMore) return;
     setState(() => _isFetchingMore = true);
-
     try {
       final watched = await VideoStorage.getWatchedIds();
       final List<AssetEntity> newVideos = await widget.folder.getAssetListRange(
         start: _currentPage * _pageSize,
         end: (_currentPage + 1) * _pageSize,
       );
-
       newVideos.sort((a, b) => (a.title ?? "").toLowerCase().compareTo((b.title ?? "").toLowerCase()));
-
       if (mounted) {
         setState(() {
           _videos.addAll(newVideos);
@@ -513,13 +464,9 @@ class _FolderDetailsPageState extends State<FolderDetailsPage> {
   return "${(bytes / pow(1024, i)).toStringAsFixed(2)} ${suffixes[i]}";
 }
 
-  // ২. সাইজ বের করার ফাংশন
   Future<String> _getTotalSelectedSize() async {
-  // আপনার ভার্সন অনুযায়ী সঠিক নাম 'selectedIndexes'
   final selectedIndexes = dragController.value.selectedIndexes; 
-  
   if (selectedIndexes.isEmpty) return "0 B";
-
   final sizes = await Future.wait(
     selectedIndexes.map((index) async {
       final file = await _videos[index].file;
@@ -531,22 +478,16 @@ class _FolderDetailsPageState extends State<FolderDetailsPage> {
   return _formatBytes(totalBytes);
 }
 
-  // --- মাল্টিপল ভিডিও ডিলিট করার ফাংশন (ফিক্সড ভার্সন) ---
   Future<void> _deleteSelectedVideos() async {
-    // ০.৭.৬ ভার্সনে ইনডেক্স পাওয়ার জন্য 'selectedIndexes' (es) ব্যবহার করুন
     final selectedIndexes = dragController.value.selectedIndexes;
-    
     if (selectedIndexes.isEmpty) return;
-
     final List<AssetEntity> toDelete = selectedIndexes.map((i) => _videos[i]).toList();
-    final List<String> ids = toDelete.map((v) => v.id).toList();
-    
+    final List<String> ids = toDelete.map((v) => v.id).toList();   
     try {
       final List<String> result = await PhotoManager.editor.deleteWithIds(ids);
       if (result.isNotEmpty) {
         setState(() {
           _videos.removeWhere((v) => toDelete.contains(v));
-          // ক্লিয়ার করার সময় অবশ্যই ব্র্যাকেট () দিবেন
           dragController.value = Selection.empty(); 
         });
         if (mounted) {
@@ -571,12 +512,9 @@ Widget build(BuildContext context) {
   final int selectedCount = dragController.value.amount;
 
   return PopScope(
-    // লজিক: যদি ভিডিও সিলেক্ট করা থাকে (isSelecting = true), তবে system back বন্ধ থাকবে (canPop = false)
     canPop: !isSelecting, 
     onPopInvokedWithResult: (didPop, result) {
       if (didPop) return;
-
-      // লজিক: যদি ভিডিও সিলেক্ট করা অবস্থায় ব্যাক বাটন চাপা হয়, তবে সিলেকশন ক্লিয়ার হবে
       if (isSelecting) {
         setState(() {
           dragController.value = Selection.empty();
@@ -589,7 +527,7 @@ Widget build(BuildContext context) {
         elevation: 0.5,
         backgroundColor: Colors.white,
         foregroundColor: Colors.black,
-        // লজিক: সার্চ মোডে থাকলে বাম পাশে ব্যাক অ্যারো বাটন (সার্চের ক্ষেত্রে যেমন করেছিলেন)
+      
         leading: isSelecting 
           ? IconButton(
               icon: const Icon(Icons.arrow_back),
@@ -621,7 +559,7 @@ Widget build(BuildContext context) {
             ),
         ],
       ),
-      // --- আপনার বাকি সব লজিক ও UI আগের মতোই থাকবে ---
+  
       body: Theme(
         data: Theme.of(context).copyWith(
           scrollbarTheme: ScrollbarThemeData(
@@ -802,7 +740,7 @@ class VideoCard extends StatelessWidget {
   const Positioned.fill(
     child: Center(
       child: Icon(
-        Icons.play_circle_outline, // আউটলাইন আইকন যা ছবিকে ঢাকবে না
+        Icons.play_circle_outline,
         color: Colors.white70, 
         size: 40,
       ),
@@ -875,7 +813,4 @@ class VideoCard extends StatelessWidget {
 
     return "$day $month, $year | ${hour.toString().padLeft(2, '0')}:$minute $period";
   }
-
- 
-
 } 
